@@ -14,6 +14,9 @@ export const MSG_TYPES = {
   CHURN: "30일 미방문 안부",
   CROSS: "이웃가게 크로스 쿠폰",
   MANUAL: "사장님 직접 발송 쿠폰",
+  MILESTONE: "N번째 방문 감사 선물",
+  BIRTHDAY: "생일 축하 쿠폰",
+  WELCOME: "매장 첫 방문 적립 안내",
   OTP: "인증번호",
 };
 

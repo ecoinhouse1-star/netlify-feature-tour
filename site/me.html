@@ -41,6 +41,7 @@ async function load() {
     <div>${groups[tab].length ? groups[tab].map((x) => `<a class="list-coupon" href="/c/${x.id}"><div class="ic">${KIND[x.kind]?.emoji || "🎟️"}</div><div class="t"><b>${esc(x.benefit)}</b><small>${esc(x.storeName)} · ${KIND[x.kind]?.name} · ${x.status === "active" ? fmtDate(x.expiresAt) + "까지" : x.status === "used" ? "사용 완료" : "만료"}</small></div></a>`).join("") : `<div class="empty">쿠폰이 없어요<br><a href="/" style="color:var(--red)">동네 쿠폰 보러 가기 →</a></div>`}</div>
     <div class="section">
       <label class="check" style="margin:0"><input type="checkbox" id="mkt" ${c.marketing ? "checked" : ""}><span>혜택·이벤트 알림 받기<br><small class="hint">끄면 골든타임·시크릿 쿠폰 알림이 오지 않아요 (수신거부)</small></span></label>
+      <div class="field"><label>🎂 생일 (선택) · 단골 가게에서 생일 쿠폰을 보내드려요</label><div class="inline"><input class="input" id="bday" placeholder="예: 03-15" maxlength="5" value="${esc(c.birthday || "")}"><button class="btn" id="bdaySave">저장</button></div></div>
     </div>
     <div class="section" style="display:grid;gap:8px">
       <a class="btn line block" style="display:grid;place-items:center" href="/region.html">관심 지역 설정</a>
@@ -48,6 +49,7 @@ async function load() {
       <button class="btn line block" id="logout">로그아웃</button>
     </div>`;
   $$("[data-tab]").forEach((b) => (b.onclick = () => { tab = b.dataset.tab; load(); }));
+  $("#bdaySave").onclick = async () => { try { await api("/api/me", { method: "PATCH", body: { birthday: $("#bday").value.trim() } }); toast("생일을 저장했어요"); } catch (e) { toast(e.message); } };
   $("#mkt").onchange = async (e) => { await api("/api/me", { method: "PATCH", body: { marketing: e.target.checked } }); toast(e.target.checked ? "알림을 켰어요" : "알림 수신을 거부했어요"); };
   $("#logout").onclick = async () => { await api("/api/auth/logout", { method: "POST" }); load(); };
   const ap = $("#addphone"); if (ap) ap.onclick = async () => { if (await openLogin({ title: "휴대폰 번호 등록", desc: "쿠폰 알림톡을 받을 번호를 인증해 주세요." })) load(); };

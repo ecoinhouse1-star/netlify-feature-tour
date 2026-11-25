@@ -1,7 +1,7 @@
 // 쿠폰마을 핵심 업무 규칙: 가게 / 손님 / 쿠폰 / 예약발송 / 등급
 import { db } from "./db.mjs";
 import { sendMessage } from "./messaging.mjs";
-import { id, fail, endOfKstDay, atKstHour, clampSendTime, distanceKm, kstParts } from "./util.mjs";
+import { id, fail, endOfKstDay, atKstHour, clampSendTime, distanceKm, kstParts, kstTime, normPhone } from "./util.mjs";
 
 const DAY = 86400000;
 export const BASE_URL = () => (process.env.URL || process.env.PUBLIC_URL || "http://localhost:8888").replace(/\/$/, "");
@@ -221,17 +221,45 @@ export async function redeemCoupon(coupon, store) {
   coupon.status = "used";
   coupon.usedAt = now;
   await saveCoupon(coupon);
-
   const customer = await getCustomer(coupon.customerId);
+  const visit = await recordVisit(store, customer, now, "coupon");
+  const perks = await visitPerks(store, customer, now);
+  return { coupon, ...visit, ...perks };
+}
+
+// 방문 1회 기록 (쿠폰 사용·매장 적립 공통): 방문수, 스탬프, N번째 방문 선물
+export async function recordVisit(store, customer, now = Date.now(), via = "coupon") {
   customer.visits = (customer.visits || 0) + 1;
   customer.visitLog = [{ store: store.slug, at: now }, ...(customer.visitLog || [])].slice(0, 50);
   await saveCustomer(customer);
-  await touchRelation(store.slug, customer.id, (r) => ({ visits: r.visits + 1, lastVisitAt: now }));
+  const rel = await touchRelation(store.slug, customer.id, (r) => ({ visits: r.visits + 1, lastVisitAt: now, firstVisitAt: r.firstVisitAt || now }));
+  await (await db()).set(`sv/${store.slug}/${new Date(now).toISOString()}_${customer.id}`, { cid: customer.id, at: now, via, no: rel.visits });
+  const rules = getRules(store);
+  let milestone = null;
+  if (rules.milestone.enabled && rules.milestone.benefit && rel.visits % Math.max(2, rules.milestone.every) === 0) {
+    milestone = await issueCoupon({
+      store, customer, kind: "reward", title: `${rel.visits}번째 방문 감사 선물`, benefit: rules.milestone.benefit,
+      expiresAt: endOfKstDay(now, 29),
+    });
+    if (customer.phone && customer.marketing) {
+      await sendMessage({
+        to: customer.phone, type: "MILESTONE", storeSlug: store.slug,
+        text: `(광고)[${store.name}] ${rel.visits}번째 방문 감사합니다! 🎉\n단골 선물을 드려요: ${milestone.benefit}\n${fmtDate(milestone.expiresAt)}까지\n▶ ${couponLink(milestone)}\n\n무료수신거부: ${BASE_URL()}/me`,
+        vars: { "#{가게명}": store.name, "#{혜택}": milestone.benefit, "#{쿠폰링크}": couponLink(milestone), "#{방문횟수}": String(rel.visits) },
+      });
+    }
+  }
+  const every = Math.max(2, rules.milestone.every || 5);
+  return {
+    grade: gradeOf(customer.visits), visitNo: rel.visits, milestone,
+    stamp: { count: rel.visits % every || (milestone ? every : 0), goal: every },
+  };
+}
 
-  const result = { coupon, grade: gradeOf(customer.visits), golden: null, cross: null };
+// 방문 뒤 자동 혜택: 리뷰 유도, 7일 골든타임, 이웃가게 쿠폰, 미방문 안부 예약
+async function visitPerks(store, customer, now) {
+  const result = { golden: null, cross: null };
   result.review = store.naverPlaceUrl ? { url: store.naverPlaceUrl, reward: store.reviewReward || "사이드 메뉴 증정" } : null;
-
-  // 7일 골든타임 쿠폰
   if (store.golden?.enabled && store.golden.benefit) {
     const already = await activeCouponOf(customer.id, store.slug, "golden");
     let soldOut = false;
@@ -241,47 +269,24 @@ export async function redeemCoupon(coupon, store) {
     }
     if (!already && !soldOut) {
       const expiresAt = endOfKstDay(now, 6);
-      const g = await issueCoupon({
-        store,
-        customer,
-        kind: "golden",
-        title: "7일 골든타임 쿠폰",
-        benefit: store.golden.benefit,
-        expiresAt,
-        extra: { goldenType: store.golden.type },
-      });
+      const g = await issueCoupon({ store, customer, kind: "golden", title: "7일 골든타임 쿠폰", benefit: store.golden.benefit, expiresAt, extra: { goldenType: store.golden.type } });
       result.golden = g;
       await enqueue(clampSendTime(now + 90 * 60000), { type: "GOLDEN", couponId: g.id, customerId: customer.id, store: store.slug });
-      const remind = clampSendTime(atKstHour(expiresAt - 2 * DAY, 11));
-      await enqueue(remind, { type: "GOLDEN_REMIND", couponId: g.id, customerId: customer.id, store: store.slug });
+      await enqueue(clampSendTime(atKstHour(expiresAt - 2 * DAY, 11)), { type: "GOLDEN_REMIND", couponId: g.id, customerId: customer.id, store: store.slug });
     }
   }
-
-  // 동네 크로스 쿠폰 (이웃 가게 품앗이)
   const partner = await pickPartner(store);
   if (partner) {
     const already = await activeCouponOf(customer.id, partner.slug, "cross");
     if (!already) {
-      const cx = await issueCoupon({
-        store: partner,
-        customer,
-        kind: "cross",
-        title: `${store.name} 손님 전용 이웃 쿠폰`,
-        benefit: partner.crossOffer,
-        expiresAt: endOfKstDay(now, 6),
-        sourceStore: store.slug,
-      });
+      const cx = await issueCoupon({ store: partner, customer, kind: "cross", title: `${store.name} 손님 전용 이웃 쿠폰`, benefit: partner.crossOffer, expiresAt: endOfKstDay(now, 6), sourceStore: store.slug });
       result.cross = { ...cx, partner: publicStore(partner) };
     }
   }
-
-  // 30일 미방문 시 안부 + 시크릿 혜택 (그 사이 다시 오면 자동 취소)
-  await enqueue(clampSendTime(atKstHour(now + 30 * DAY, 11)), {
-    type: "CHURN",
-    customerId: customer.id,
-    store: store.slug,
-    visitAt: now,
-  });
+  const rules = getRules(store);
+  if (rules.winback.enabled) {
+    await enqueue(clampSendTime(atKstHour(now + Math.max(7, rules.winback.days) * DAY, 11)), { type: "CHURN", customerId: customer.id, store: store.slug, visitAt: now });
+  }
   return result;
 }
 
@@ -336,7 +341,9 @@ export async function processQueue(now = Date.now()) {
       results.push({ job: job.type, error: String(e.message || e) });
     }
   }
-  return { processed: results.length, pending: keys.length - due.length, results };
+  let daily = null;
+  try { daily = await runDailyRules(now); } catch (e) { daily = { error: String(e.message || e) }; }
+  return { processed: results.length, pending: keys.length - due.length, results, daily };
 }
 
 async function runJob(job) {
@@ -371,7 +378,7 @@ async function runJob(job) {
   if (job.type === "CHURN") {
     const r = await (await db()).get(`scu/${store.slug}/${customer.id}`);
     if (r?.lastVisitAt && r.lastVisitAt > job.visitAt) return { job: job.type, skipped: "came-back" };
-    const benefit = store.churnOffer || "방문 시 음료 1잔 서비스";
+    const benefit = getRules(store).winback.benefit;
     const c = await issueCoupon({
       store,
       customer,
@@ -384,7 +391,7 @@ async function runJob(job) {
       to: customer.phone,
       type: "CHURN",
       storeSlug: store.slug,
-      text: `${prefix}[${store.name}] 요즘 잘 지내시죠? 한 달 동안 못 뵈어서 사장님이 시크릿 혜택을 준비했어요.\n🤫 ${benefit}\n${fmtDate(c.expiresAt)}까지\n▶ ${couponLink(c)}${optout}`,
+      text: `${prefix}[${store.name}] 요즘 잘 지내시죠? 한동안 못 뵈어서 사장님이 시크릿 혜택을 준비했어요.\n🤫 ${benefit}\n${fmtDate(c.expiresAt)}까지\n▶ ${couponLink(c)}${optout}`,
       vars: { "#{가게명}": store.name, "#{혜택}": benefit, "#{쿠폰링크}": couponLink(c) },
     });
     return { job: job.type, sent: log.ok };
@@ -519,3 +526,166 @@ export async function storeQueue(slug) {
   const jobs = (await Promise.all(keys.map((k) => s.get(k)))).filter((j) => j && j.store === slug);
   return jobs;
 }
+
+// ================= 고객관리 프로그램 =================
+
+// ---- 자동 발송 규칙 (사장님이 켜고 끔) ----
+export function getRules(store) {
+  const r = store.rules || {};
+  return {
+    milestone: { enabled: true, every: 5, benefit: store.hidden?.regular || "단골 감사 서비스 메뉴", ...(r.milestone || {}) },
+    birthday: { enabled: true, daysBefore: 3, benefit: "생일 축하 디저트·음료 서비스", ...(r.birthday || {}) },
+    winback: { enabled: true, days: 30, benefit: store.churnOffer || "방문 시 음료 1잔 서비스", ...(r.winback || {}) },
+  };
+}
+
+// ---- 매장에서 바로 손님 등록·적립 (쿠폰 없이 온 손님) ----
+export async function checkinCustomer(store, { phone, name, marketing, memo }) {
+  const p = normPhone(phone);
+  if (!p) fail(400, "손님 휴대폰 번호를 확인해 주세요.");
+  const s = await db();
+  const existed = !!(await s.get(`ph/${p}`));
+  const customer = await findOrCreateCustomer({ phone: p, name: (name || "").slice(0, 20) });
+  if (marketing && !customer.marketing) {
+    customer.marketing = true;
+    customer.consentAt = Date.now();
+    customer.consentVia = `store:${store.slug}`;
+    await saveCustomer(customer);
+  }
+  const rel = await s.get(`scu/${store.slug}/${customer.id}`);
+  if (rel?.lastVisitAt && rel.lastVisitAt > Date.now() - 2 * 3600000) fail(409, "2시간 안에 이미 적립한 손님이에요.");
+  const isNewHere = !rel;
+  await touchRelation(store.slug, customer.id, (r) => ({ memo: memo ? [r.memo, memo].filter(Boolean).join("\n") : r.memo }));
+  const now = Date.now();
+  const visit = await recordVisit(store, customer, now, "store");
+  const perks = await visitPerks(store, customer, now);
+  if (customer.phone && customer.marketing && isNewHere) {
+    await sendMessage({
+      to: customer.phone, type: "WELCOME", storeSlug: store.slug,
+      text: `[${store.name}] 첫 방문 감사합니다! 방문 스탬프가 적립됐어요.\n내 쿠폰·스탬프 보기: ${BASE_URL()}/me`,
+      vars: { "#{가게명}": store.name },
+    });
+  }
+  return { customer: { id: customer.id, name: customer.name || "", isNewMember: !existed, isNewHere, marketing: !!customer.marketing }, ...visit, ...perks };
+}
+
+// ---- 손님 상세 카드 ----
+export async function customerDetail(store, cid) {
+  const s = await db();
+  const rel = await s.get(`scu/${store.slug}/${cid}`);
+  const c = await getCustomer(cid);
+  if (!rel || !c) fail(404, "우리 가게 손님이 아니에요.");
+  const visitKeys = (await s.list(`sv/${store.slug}/`)).filter((k) => k.endsWith(`_${cid}`)).reverse().slice(0, 50);
+  const visits = (await Promise.all(visitKeys.map((k) => s.get(k)))).filter(Boolean);
+  const coupons = (await customerCoupons(cid)).filter((x) => x.storeSlug === store.slug);
+  const seg = segmentOf(rel);
+  const every = Math.max(2, getRules(store).milestone.every || 5);
+  return {
+    id: cid, name: c.name || "", phone: c.phone || "", marketing: !!c.marketing,
+    birthday: rel.birthday || c.birthday || "", memo: rel.memo || "", tags: rel.tags || [],
+    grade: gradeOf(c.visits), segment: seg, segmentName: SEGMENTS[seg].name, action: SEGMENTS[seg].action,
+    visitsHere: rel.visits || 0, firstAt: rel.firstAt, firstVisitAt: rel.firstVisitAt || null, lastVisitAt: rel.lastVisitAt || null,
+    stamp: { count: (rel.visits || 0) % every, goal: every },
+    visits, coupons,
+    couponStats: { issued: coupons.length, used: coupons.filter((x) => x.status === "used").length },
+  };
+}
+export async function updateCustomerNote(store, cid, { memo, birthday, tags }) {
+  const s = await db();
+  const rel = await s.get(`scu/${store.slug}/${cid}`);
+  if (!rel) fail(404, "우리 가게 손님이 아니에요.");
+  if (typeof memo === "string") rel.memo = memo.slice(0, 500);
+  if (typeof birthday === "string") {
+    if (birthday && !/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(birthday)) fail(400, "생일은 월-일(예: 03-15)로 입력해 주세요.");
+    rel.birthday = birthday;
+  }
+  if (Array.isArray(tags)) rel.tags = tags.map((t) => String(t).slice(0, 12)).filter(Boolean).slice(0, 8);
+  await s.set(`scu/${store.slug}/${cid}`, rel);
+  return rel;
+}
+
+// ---- 생일 쿠폰 (하루 한 번, 오전 10시 이후 자동) ----
+export async function runDailyRules(now = Date.now()) {
+  const p = kstParts(now);
+  if (p.h < 10) return { skipped: "before-10am" };
+  const s = await db();
+  const dayKey = `daily/${p.y}-${String(p.m + 1).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+  if (await s.get(dayKey)) return { skipped: "done" };
+  await s.set(dayKey, { at: now });
+  let sent = 0;
+  for (const store of await listStores()) {
+    const rule = getRules(store).birthday;
+    if (!rule.enabled || !rule.benefit) continue;
+    const t = kstParts(now + (Number(rule.daysBefore) || 0) * DAY);
+    const target = `${String(t.m + 1).padStart(2, "0")}-${String(t.d).padStart(2, "0")}`;
+    for (const key of await s.list(`scu/${store.slug}/`)) {
+      const rel = await s.get(key);
+      if (!rel) continue;
+      const c = await getCustomer(rel.customerId);
+      const bday = rel.birthday || c?.birthday;
+      if (!c || bday !== target || rel.bdayYear === t.y) continue;
+      rel.bdayYear = t.y;
+      await s.set(key, rel);
+      if (!c.marketing || !c.phone) continue;
+      const cp = await issueCoupon({ store, customer: c, kind: "birthday", title: "🎂 생일 축하 쿠폰", benefit: rule.benefit, expiresAt: endOfKstDay(now, 13 + (Number(rule.daysBefore) || 0)) });
+      await sendMessage({
+        to: c.phone, type: "BIRTHDAY", storeSlug: store.slug,
+        text: `(광고)[${store.name}] ${c.name ? c.name + "님, " : ""}생일 미리 축하드려요! 🎂\n사장님이 준비한 선물: ${rule.benefit}\n${fmtDate(cp.expiresAt)}까지\n▶ ${couponLink(cp)}\n\n무료수신거부: ${BASE_URL()}/me`,
+        vars: { "#{가게명}": store.name, "#{혜택}": rule.benefit, "#{쿠폰링크}": couponLink(cp) },
+      });
+      sent++;
+    }
+  }
+  return { birthday: sent };
+}
+
+// ---- 월간 성과 리포트 ----
+function monthRange(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return [kstTime(y, m - 1, 1), kstTime(y, m, 1)];
+}
+export function prevMonth(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+export async function monthlyReport(slug, ym) {
+  const s = await db();
+  const rels = (await Promise.all((await s.list(`scu/${slug}/`)).map((k) => s.get(k)))).filter(Boolean);
+  const visits = (await Promise.all((await s.list(`sv/${slug}/`)).map((k) => s.get(k)))).filter(Boolean);
+  const coupons = await storeCoupons(slug);
+  const msgKeys = await s.list(`msglog/${slug}/`);
+  const calc = (ym2) => {
+    const [a, b] = monthRange(ym2);
+    const inM = (t) => t >= a && t < b;
+    const v = visits.filter((x) => inM(x.at));
+    const visitors = new Set(v.map((x) => x.cid));
+    const revisitors = new Set(v.filter((x) => x.no >= 2).map((x) => x.cid));
+    const byKind = (k) => coupons.filter((c) => c.kind === k);
+    const per = {};
+    for (const x of v) per[x.cid] = (per[x.cid] || 0) + 1;
+    return {
+      newCustomers: rels.filter((r) => inM(r.firstAt)).length,
+      visits: v.length,
+      visitors: visitors.size,
+      revisitors: revisitors.size,
+      revisitRate: pct(revisitors.size, visitors.size),
+      storeCheckins: v.filter((x) => x.via === "store").length,
+      couponIssued: coupons.filter((c) => inM(c.issuedAt)).length,
+      couponUsed: coupons.filter((c) => c.usedAt && inM(c.usedAt)).length,
+      golden: { issued: byKind("golden").filter((c) => inM(c.issuedAt)).length, used: byKind("golden").filter((c) => c.usedAt && inM(c.usedAt)).length },
+      messages: msgKeys.filter((k) => { const t = Date.parse(k.split("/")[2].split("_")[0]); return inM(t); }).length,
+      byDay: Array.from({ length: Math.round((b - a) / DAY) }, (_, i) => v.filter((x) => x.at >= a + i * DAY && x.at < a + (i + 1) * DAY).length),
+      top: Object.entries(per).sort((x, y) => y[1] - x[1]).slice(0, 5),
+    };
+  };
+  const cur = calc(ym);
+  const prev = calc(prevMonth(ym));
+  const names = {};
+  for (const [cid] of cur.top) { const c = await getCustomer(cid); names[cid] = c?.name || maskPhoneLite(c?.phone); }
+  cur.top = cur.top.map(([cid, n]) => ({ name: names[cid] || "손님", visits: n }));
+  prev.top = [];
+  const seg = { waiting: 0, new: 0, regular: 0, risk: 0 };
+  for (const r of rels) seg[segmentOf(r)]++;
+  return { month: ym, cur, prev, segments: seg, totalCustomers: rels.length };
+}
+const maskPhoneLite = (p) => (p ? `${p.slice(0, 3)}-****-${p.slice(-4)}` : "");

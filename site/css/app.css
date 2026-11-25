@@ -304,3 +304,27 @@ textarea.input { height: auto; min-height: 96px; padding: 12px 14px; line-height
 .mydist { color: #6b6b70; margin-left: 2px; }
 .mydist b { color: var(--red); }
 .dist-btn { color: var(--blue); text-decoration: underline; font-size: 15px; }
+
+/* 고객관리 */
+.big-phone { height: 64px; font-size: 28px; text-align: center; letter-spacing: 2px; font-weight: 700; }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.keypad button { height: 56px; border-radius: 12px; background: var(--tile); font-size: 22px; font-weight: 700; }
+.keypad button:active { background: #e4e4e8; }
+.stamps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.stamps i { width: 34px; height: 34px; border-radius: 50%; border: 1.5px dashed #d0d0d5; display: grid; place-items: center; font-style: normal; font-size: 13px; color: #b5b5ba; background: #fff; }
+.stamps i.on { border: 0; background: var(--red); color: #fff; font-size: 16px; }
+.hist { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.rule { border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 12px; }
+.rule-h { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; cursor: pointer; }
+.toggle { appearance: none; width: 50px; height: 30px; border-radius: 99px; background: #d0d0d5; position: relative; flex: 0 0 auto; cursor: pointer; transition: background .15s; }
+.toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.toggle:checked { background: var(--red); }
+.toggle:checked::after { left: 23px; }
+.rep-head { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: 18px; }
+.kpi em.up { color: var(--green); }
+.kpi em.down { color: var(--red); }
+.kpi em.flat { color: #8a8a8e; }
+@media print {
+  .topbar, .owner-tabs, .notice:first-child, .no-print, .cta, .tabbar, #rprev, #rnext { display: none !important; }
+  body, .app { background: #fff; }
+}

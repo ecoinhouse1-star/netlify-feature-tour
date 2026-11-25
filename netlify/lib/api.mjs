@@ -9,7 +9,8 @@ import { sendMessage, messagingMode } from "./messaging.mjs";
 import {
   getStore, saveStore, listStores, publicStore, eventStatus, getCustomer, saveCustomer, findOrCreateCustomer,
   getCoupon, customerCoupons, storeCoupons, issueEventCoupon, redeemCoupon, claimHidden, gradeOf, GRADES,
-  GOLDEN_TYPES, processQueue, storeStats, storeCustomers, crmSummary, sendCouponsTo, SEGMENTS, storeMessages, storeQueue, BASE_URL,
+  GOLDEN_TYPES, processQueue, storeStats, storeCustomers, crmSummary, sendCouponsTo, SEGMENTS,
+  getRules, checkinCustomer, customerDetail, updateCustomerNote, monthlyReport, storeMessages, storeQueue, BASE_URL,
 } from "./logic.mjs";
 import { seedIfEmpty } from "./seed.mjs";
 import { lookupPlace, defaultOffers } from "./place.mjs";
@@ -307,7 +308,7 @@ on("GET", "/api/auth/naver/callback", async (req, url) => {
 
 // ---- 마이페이지 ----
 function meView(c) {
-  return { id: c.id, name: c.name || "", phone: maskPhone(c.phone), hasPhone: !!c.phone, marketing: !!c.marketing, grade: gradeOf(c.visits), kakao: !!c.kakaoId, naver: !!c.naverId };
+  return { id: c.id, name: c.name || "", birthday: c.birthday || "", phone: maskPhone(c.phone), hasPhone: !!c.phone, marketing: !!c.marketing, grade: gradeOf(c.visits), kakao: !!c.kakaoId, naver: !!c.naverId };
 }
 on("GET", "/api/me", async (req) => {
   const c = await currentCustomer(req);
@@ -319,6 +320,10 @@ on("PATCH", "/api/me", async (req) => {
   const b = await body(req);
   if (typeof b.marketing === "boolean") c.marketing = b.marketing;
   if (typeof b.name === "string") c.name = b.name.slice(0, 20);
+  if (typeof b.birthday === "string") {
+    if (b.birthday && !/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(b.birthday)) fail(400, "생일은 월-일(예: 03-15)로 입력해 주세요.");
+    c.birthday = b.birthday;
+  }
   await saveCustomer(c);
   return json({ customer: meView(c) });
 });
@@ -462,6 +467,45 @@ on("POST", "/api/owner/send-coupons", async (req) => {
   const b = await body(req);
   if (!Array.isArray(b.customerIds) || !b.customerIds.length) fail(400, "쿠폰을 보낼 손님을 골라주세요.");
   return json(await sendCouponsTo(s, b.customerIds, b));
+});
+// ---- 고객관리: 매장 적립 / 손님 상세 / 자동 규칙 / 월간 리포트 ----
+on("POST", "/api/owner/checkin", async (req) => {
+  const s = await needOwner(req);
+  return json(await checkinCustomer(s, await body(req)));
+});
+on("GET", "/api/owner/customers/:cid", async (req, url, { cid }) => {
+  const s = await needOwner(req);
+  return json({ customer: await customerDetail(s, cid) });
+});
+on("PATCH", "/api/owner/customers/:cid", async (req, url, { cid }) => {
+  const s = await needOwner(req);
+  await updateCustomerNote(s, cid, await body(req));
+  return json({ customer: await customerDetail(s, cid) });
+});
+on("GET", "/api/owner/rules", async (req) => {
+  const s = await needOwner(req);
+  return json({ rules: getRules(s) });
+});
+on("PUT", "/api/owner/rules", async (req) => {
+  const s = await needOwner(req);
+  const b = await body(req);
+  const cur = getRules(s);
+  const clean = (x, d) => ({
+    enabled: typeof x?.enabled === "boolean" ? x.enabled : d.enabled,
+    benefit: typeof x?.benefit === "string" ? x.benefit.slice(0, 60) : d.benefit,
+    ...(d.every != null ? { every: Math.min(50, Math.max(2, Number(x?.every) || d.every)) } : {}),
+    ...(d.daysBefore != null ? { daysBefore: Math.min(14, Math.max(0, Number(x?.daysBefore ?? d.daysBefore))) } : {}),
+    ...(d.days != null ? { days: Math.min(180, Math.max(7, Number(x?.days) || d.days)) } : {}),
+  });
+  s.rules = { milestone: clean(b.milestone, cur.milestone), birthday: clean(b.birthday, cur.birthday), winback: clean(b.winback, cur.winback) };
+  await saveStore(s);
+  return json({ rules: getRules(s) });
+});
+on("GET", "/api/owner/report", async (req, url) => {
+  const s = await needOwner(req);
+  const now = new Date(Date.now() + 9 * 3600000);
+  const ym = /^\d{4}-\d{2}$/.test(url.searchParams.get("month") || "") ? url.searchParams.get("month") : now.toISOString().slice(0, 7);
+  return json({ report: await monthlyReport(s.slug, ym), store: { name: s.name, region: s.region } });
 });
 on("GET", "/api/owner/customers.csv", async (req) => {
   const s = await needOwner(req);

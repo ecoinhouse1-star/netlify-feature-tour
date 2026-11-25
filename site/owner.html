@@ -124,7 +124,7 @@ function loginView(mode = "login") {
 }
 
 // ---------- 메인 ----------
-const TABS = [["dash", "📊 현황"], ["use", "✅ 쿠폰 사용처리"], ["coupon", "🎟️ 쿠폰 설정"], ["info", "🏪 가게 정보"], ["cust", "👥 신규·단골 관리"], ["msg", "💬 알림톡 기록"], ["promo", "📣 홍보물"]];
+const TABS = [["dash", "📊 현황"], ["checkin", "➕ 매장 적립"], ["use", "✅ 쿠폰 사용처리"], ["cust", "👥 신규·단골 관리"], ["rules", "⚙️ 자동 발송"], ["report", "📈 월간 리포트"], ["coupon", "🎟️ 쿠폰 설정"], ["info", "🏪 가게 정보"], ["msg", "💬 알림톡 기록"], ["promo", "📣 홍보물"]];
 function render() {
   const s = me.store;
   $("#ttl").textContent = s.name;
@@ -133,13 +133,14 @@ function render() {
     <div class="owner-tabs">${TABS.map(([k, l]) => `<button class="${k === tab ? "on" : ""}" data-t="${k}">${l}</button>`).join("")}</div>
     <div id="pane"></div>`;
   $$("[data-t]").forEach((b) => (b.onclick = () => { tab = b.dataset.t; history.replaceState(null, "", "?tab=" + tab); render(); }));
-  ({ dash, use, coupon, info, cust, msg, promo })[tab]();
+  ({ dash, checkin, use, coupon, info, cust, rules, report, msg, promo })[tab]();
 }
 
 async function dash() {
   const { stats: st, queue } = await api("/api/owner/stats");
   const max = Math.max(1, ...st.daily.map((d) => Math.max(d.issued, d.used)));
   $("#pane").innerHTML = `
+    <div style="padding:14px 18px 0"><button class="btn red block" id="goCheckin">➕ 손님 방문 적립하기 (전화번호)</button></div>
     <div class="kpis">
       <div class="kpi"><small>모은 손님</small><b>${st.customers}명</b><em>이번 주 +${st.newThisWeek}</em></div>
       <div class="kpi"><small>단골 (2회 이상)</small><b>${st.regulars}명</b></div>
@@ -157,6 +158,7 @@ async function dash() {
       <div class="notice" style="margin:14px 0 0">🔑 직원 확인 번호: <b style="font-size:18px">${esc(me.store.staffPin)}</b> — 손님 쿠폰 화면에서 직원이 입력해요. (가게 정보 탭에서 변경)</div>
     </div>`;
   $("#cp").onclick = () => copyText(me.link);
+  $("#goCheckin").onclick = () => { tab = "checkin"; render(); };
 }
 
 function use() {
@@ -347,6 +349,7 @@ async function cust() {
           <div class="t"><b>${esc(c.name || "이름 없음")}</b> <span class="pill ${segColor[c.segment]}">${c.segmentName}</span> <small class="hint">${esc(c.grade)}</small>
             <div class="hint">${esc(c.phone)} · 방문 ${c.visits}회 · ${c.lastVisitAt ? `마지막 방문 ${c.daysSince}일 전` : `쿠폰 받은 지 ${c.daysSince}일`}${c.marketing ? "" : " · <span style='color:var(--red)'>알림 수신 거부</span>"}</div>
             <div class="hint" style="color:#2a4fa0">→ ${c.action}</div></div>
+          <button class="btn sm line" data-detail="${c.customerId}">상세</button>
         </label>`).join("")}</div>` : `<div class="empty">해당하는 손님이 없어요.<br>손님용 링크와 QR을 홍보해 보세요!</div>`}
     </div>
     <div style="height:70px"></div>
@@ -361,6 +364,7 @@ async function cust() {
   $("#all").onchange = (e) => { boxes().forEach((x) => (x.checked = e.target.checked)); paint(); };
   const cl = $("#clist");
   if (cl) cl.addEventListener("change", paint);
+  if (cl) cl.addEventListener("click", (e) => { const b = e.target.closest("[data-detail]"); if (!b) return; e.preventDefault(); detailSheet(b.dataset.detail); });
   $("#sendBtn").onclick = () => sendSheet(boxes().filter((x) => x.checked).map((x) => x.value), SEG[crmSeg]?.action);
 }
 
@@ -404,6 +408,169 @@ function sendSheet(ids, suggest) {
       cust();
     } catch (e) { $("#serr", sh).textContent = e.message; }
   };
+}
+
+// ---------- 매장 적립 (쿠폰 없이 온 손님) ----------
+function checkin() {
+  $("#pane").innerHTML = `<div class="panel">
+    <h4>📱 손님 휴대폰 번호로 방문 적립</h4>
+    <div class="hint">처음 온 손님은 자동으로 손님 명단에 등록되고, 단골 손님은 스탬프가 쌓여요. 골든타임 쿠폰도 자동으로 나가요.</div>
+    <input class="input big-phone" id="cphone" inputmode="numeric" placeholder="010-0000-0000" autocomplete="off" style="margin-top:12px">
+    <div class="keypad" id="kp">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "지움", 0, "010"].map((k) => `<button data-k="${k}">${k}</button>`).join("")}</div>
+    <div class="field"><label>이름 (선택)</label><input class="input" id="cname" maxlength="20"></div>
+    <div class="field"><label>메모 (선택)</label><input class="input" id="cmemo" placeholder="예: 매운 거 못 드심"></div>
+    <label class="check"><input type="checkbox" id="cmkt"><span>손님이 <b>혜택 알림 수신</b>에 동의했어요<br><small class="hint">동의한 손님에게만 골든타임·생일·단골 선물 알림이 가요. 꼭 손님께 여쭤보고 체크하세요.</small></span></label>
+    <div class="err" id="cerr"></div>
+    <button class="btn red block" id="cgo">방문 적립하기</button>
+    <div id="cres"></div></div>`;
+  const ph = $("#cphone");
+  $("#kp").onclick = (e) => {
+    const k = e.target.closest("[data-k]")?.dataset.k;
+    if (!k) return;
+    if (k === "지움") ph.value = ph.value.slice(0, -1);
+    else if (k === "010") ph.value = "010";
+    else ph.value += k;
+  };
+  $("#cgo").onclick = async () => {
+    $("#cerr").textContent = "";
+    try {
+      const r = await api("/api/owner/checkin", { body: { phone: ph.value, name: v("cname"), memo: v("cmemo"), marketing: $("#cmkt").checked } });
+      const st = r.stamp;
+      $("#cres").innerHTML = `<div class="reward" style="margin:14px 0 0">
+        <h4>✅ ${esc(r.customer.name || "손님")} · ${r.visitNo}번째 방문 ${r.customer.isNewHere ? '<span class="pill ok">신규 등록</span>' : ""}</h4>
+        <div class="stamps">${Array.from({ length: st.goal }, (_, i) => `<i class="${i < st.count ? "on" : ""}">${i < st.count ? "★" : i + 1}</i>`).join("")}</div>
+        ${r.milestone ? `<div style="margin-top:8px">🎁 <b>${r.visitNo}번째 방문 선물 지급:</b> ${esc(r.milestone.benefit)}</div>` : `<div class="hint">${st.goal - st.count}번 더 오시면 단골 선물!</div>`}
+        ${r.golden ? `<div style="margin-top:6px">⏰ 7일 골든타임 쿠폰 발급: ${esc(r.golden.benefit)}</div>` : ""}
+        ${r.customer.marketing ? "" : `<div class="hint" style="color:#8a6400;margin-top:6px">알림 수신 미동의 손님이라 문자는 가지 않아요.</div>`}
+        <button class="btn line sm" style="margin-top:10px" data-detail="${r.customer.id}">손님 상세 보기</button></div>`;
+      $("[data-detail]", $("#cres")).onclick = () => detailSheet(r.customer.id);
+      ph.value = ""; $("#cname").value = ""; $("#cmemo").value = ""; $("#cmkt").checked = false;
+    } catch (e) { $("#cerr").textContent = e.message; }
+  };
+}
+
+// ---------- 손님 상세 카드 ----------
+async function detailSheet(cid) {
+  const { customer: c } = await api(`/api/owner/customers/${encodeURIComponent(cid)}`);
+  const K = { event: "이벤트", golden: "골든타임", cross: "이웃가게", hidden: "히든", secret: "특별", reward: "방문 선물", birthday: "생일" };
+  const bg = document.createElement("div"); bg.className = "sheet-bg show";
+  const sh = document.createElement("div"); sh.className = "sheet";
+  const d = (t) => (t ? new Date(t).toLocaleDateString("ko-KR") : "-");
+  sh.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div><h3>${esc(c.name || "이름 없음")} <span class="pill">${esc(c.segmentName)}</span></h3>
+        <div class="hint">${c.grade.emoji} ${esc(c.grade.name)} · ${c.marketing ? "알림 수신 동의" : "<span style='color:var(--red)'>알림 수신 거부</span>"}</div></div>
+      ${c.phone ? `<a class="btn sm line" href="tel:${esc(c.phone)}" style="display:grid;place-items:center">📞 전화</a>` : ""}
+    </div>
+    <div class="kpis" style="padding:14px 0 0">
+      <div class="kpi"><small>우리 가게 방문</small><b>${c.visitsHere}회</b><em>첫 방문 ${d(c.firstVisitAt)}</em></div>
+      <div class="kpi"><small>마지막 방문</small><b style="font-size:18px">${d(c.lastVisitAt)}</b><em>쿠폰 ${c.couponStats.used}/${c.couponStats.issued}장 사용</em></div>
+    </div>
+    <div class="stamps" style="margin-top:12px">${Array.from({ length: c.stamp.goal }, (_, i) => `<i class="${i < c.stamp.count ? "on" : ""}">${i < c.stamp.count ? "★" : i + 1}</i>`).join("")}</div>
+    <div class="hint" style="color:#2a4fa0;margin-top:8px">→ 추천: ${esc(c.action)}</div>
+    <div class="field"><label>사장님 메모</label><textarea class="input" id="dmemo" rows="3" placeholder="예: 매운 거 못 드심, 아이 2명">${esc(c.memo)}</textarea></div>
+    <div class="field"><div class="inline"><div style="flex:1"><label>생일 (월-일)</label><input class="input" id="dbday" placeholder="03-15" maxlength="5" value="${esc(c.birthday)}"></div>
+      <div style="flex:1"><label>태그 (쉼표)</label><input class="input" id="dtags" value="${esc(c.tags.join(", "))}" placeholder="가족손님, 포장"></div></div></div>
+    <div class="err" id="derr"></div>
+    <button class="btn block" id="dsave">메모 저장</button>
+    <h4 style="margin:18px 0 6px">방문 기록</h4>
+    ${c.visits.length ? c.visits.map((x) => `<div class="hist">${new Date(x.at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${x.no}번째 · ${x.via === "store" ? "매장 적립" : "쿠폰 사용"}</div>`).join("") : `<div class="hint">아직 방문 기록이 없어요 (쿠폰만 받음)</div>`}
+    <h4 style="margin:18px 0 6px">받은 쿠폰</h4>
+    ${c.coupons.map((x) => `<div class="hist"><span class="pill">${K[x.kind] || x.kind}</span> ${esc(x.benefit)} · <b>${{ active: "사용 전", used: "사용", expired: "만료" }[x.status]}</b></div>`).join("") || `<div class="hint">없어요</div>`}
+    <button class="btn red block" id="dsend" style="margin-top:16px" ${c.marketing ? "" : "disabled"}>이 손님에게 쿠폰 보내기</button>
+    <button class="btn line block" id="dx" style="margin-top:8px">닫기</button>`;
+  document.body.append(bg, sh);
+  requestAnimationFrame(() => sh.classList.add("show"));
+  const close = () => { sh.classList.toggle("show", false); bg.style.display = "none"; setTimeout(() => { sh.outerHTML = ""; bg.outerHTML = ""; }, 250); };
+  bg.onclick = close;
+  $("#dx", sh).onclick = close;
+  $("#dsave", sh).onclick = async () => {
+    try {
+      await api(`/api/owner/customers/${encodeURIComponent(cid)}`, { method: "PATCH", body: { memo: $("#dmemo", sh).value, birthday: $("#dbday", sh).value.trim(), tags: $("#dtags", sh).value.split(",").map((x) => x.trim()).filter(Boolean) } });
+      toast("저장했어요");
+    } catch (e) { $("#derr", sh).textContent = e.message; }
+  };
+  $("#dsend", sh).onclick = () => { close(); sendSheet([cid], c.action); };
+}
+
+// ---------- 자동 발송 규칙 ----------
+async function rules() {
+  const { rules: r } = await api("/api/owner/rules");
+  const card = (k, title, desc, inner) => `<div class="rule"><label class="rule-h"><span><b>${title}</b><div class="hint">${desc}</div></span><input type="checkbox" class="toggle" id="${k}_on" ${r[k].enabled ? "checked" : ""}></label>${inner}</div>`;
+  $("#pane").innerHTML = `<div class="panel">
+    <div class="hint" style="margin-top:12px">조건만 정해두면 알아서 쿠폰과 알림톡이 나가요. (알림 수신 동의 손님만, 밤 9시~아침 8시 제외)</div>
+    ${card("milestone", "🎁 N번째 방문 감사 선물", "방문할 때마다 스탬프가 쌓이고, 정한 횟수마다 선물 쿠폰이 자동 발급돼요.", `
+      <div class="inline" style="margin-top:10px"><div style="flex:0 0 110px"><label class="hint">몇 번마다</label><input class="input" id="milestone_every" type="number" min="2" max="50" value="${r.milestone.every}"></div>
+      <div style="flex:1"><label class="hint">선물</label><input class="input" id="milestone_benefit" value="${esc(r.milestone.benefit)}"></div></div>`)}
+    ${card("birthday", "🎂 생일 쿠폰", "손님 상세 카드에 생일을 적어두면(또는 손님이 직접 입력) 생일 며칠 전에 자동 발송돼요.", `
+      <div class="inline" style="margin-top:10px"><div style="flex:0 0 110px"><label class="hint">며칠 전</label><input class="input" id="birthday_daysBefore" type="number" min="0" max="14" value="${r.birthday.daysBefore}"></div>
+      <div style="flex:1"><label class="hint">선물</label><input class="input" id="birthday_benefit" value="${esc(r.birthday.benefit)}"></div></div>`)}
+    ${card("winback", "💌 오래 안 온 손님 다시 부르기", "마지막 방문 뒤 정한 날짜가 지나도록 안 오면 '보고 싶어요' 시크릿 쿠폰이 나가요. 그 사이 오면 자동 취소.", `
+      <div class="inline" style="margin-top:10px"><div style="flex:0 0 110px"><label class="hint">며칠 미방문</label><input class="input" id="winback_days" type="number" min="7" max="180" value="${r.winback.days}"></div>
+      <div style="flex:1"><label class="hint">혜택</label><input class="input" id="winback_benefit" value="${esc(r.winback.benefit)}"></div></div>`)}
+    <div class="rule" style="opacity:.8"><b>⏰ 7일 골든타임 · 만료 D-2 리마인드</b><div class="hint">'쿠폰 설정' 탭에서 관리해요. (방문 1시간 30분 뒤 감사 + 만료 전날 리마인드)</div></div>
+    <button class="btn red block" id="rsave" style="margin-top:16px">저장하기</button></div>`;
+  $("#rsave").onclick = async () => {
+    const g = (k, f) => $(`#${k}_${f}`)?.value;
+    try {
+      await api("/api/owner/rules", { method: "PUT", body: {
+        milestone: { enabled: $("#milestone_on").checked, every: g("milestone", "every"), benefit: g("milestone", "benefit") },
+        birthday: { enabled: $("#birthday_on").checked, daysBefore: g("birthday", "daysBefore"), benefit: g("birthday", "benefit") },
+        winback: { enabled: $("#winback_on").checked, days: g("winback", "days"), benefit: g("winback", "benefit") },
+      } });
+      toast("자동 발송 규칙을 저장했어요");
+    } catch (e) { toast(e.message); }
+  };
+}
+
+// ---------- 월간 성과 리포트 ----------
+let repMonth = null;
+async function report() {
+  const q = repMonth ? `?month=${repMonth}` : "";
+  const { report: R, store } = await api("/api/owner/report" + q);
+  repMonth = R.month;
+  const [y, m] = R.month.split("-").map(Number);
+  const shift = (n) => { const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+  const c = R.cur, p = R.prev;
+  const diff = (a, b, unit = "") => {
+    if (!b && !a) return `<em class="flat">변화 없음</em>`;
+    if (!b) return `<em class="up">▲ 새로 생김</em>`;
+    const d = a - b;
+    return d === 0 ? `<em class="flat">지난달과 같음</em>` : `<em class="${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}${unit} (지난달 ${b}${unit})</em>`;
+  };
+  const max = Math.max(1, ...c.byDay);
+  $("#pane").innerHTML = `<div class="panel report" id="rep">
+    <div class="rep-head"><button class="btn sm line" id="rprev">◀</button><b>${y}년 ${m}월 성과 리포트</b><button class="btn sm line" id="rnext">▶</button></div>
+    <div class="hint" style="text-align:center">${esc(store.name)} · ${esc(store.region || "")}</div>
+    <div class="kpis" style="padding:14px 0">
+      <div class="kpi"><small>새로 온 손님</small><b>${c.newCustomers}명</b>${diff(c.newCustomers, p.newCustomers, "명")}</div>
+      <div class="kpi"><small>총 방문</small><b>${c.visits}회</b>${diff(c.visits, p.visits, "회")}</div>
+      <div class="kpi"><small>재방문 손님</small><b>${c.revisitors}명</b>${diff(c.revisitors, p.revisitors, "명")}</div>
+      <div class="kpi"><small>재방문율</small><b>${c.revisitRate}%</b>${diff(c.revisitRate, p.revisitRate, "%p")}</div>
+      <div class="kpi"><small>쿠폰 사용</small><b>${c.couponUsed}장</b><em class="flat">발급 ${c.couponIssued}장</em></div>
+      <div class="kpi"><small>골든타임 재방문</small><b>${c.golden.used}명</b><em class="flat">발급 ${c.golden.issued}장</em></div>
+    </div>
+    <h4>날짜별 방문</h4>
+    <div class="bars">${c.byDay.map((n, i) => `<div title="${i + 1}일 ${n}회"><i class="b" style="height:${(n / max) * 100}%"></i>${(i + 1) % 5 === 0 || i === 0 ? `<span>${i + 1}</span>` : ""}</div>`).join("")}</div>
+    <h4 style="margin-top:28px">지금 손님 구성 (전체 ${R.totalCustomers}명)</h4>
+    <div class="funnel"><div><b>${R.segments.waiting}</b><span>방문 전</span></div><i>→</i><div><b>${R.segments.new}</b><span>신규</span></div><i>→</i><div><b>${R.segments.regular}</b><span>단골</span></div><i>·</i><div><b style="color:var(--red)">${R.segments.risk}</b><span>이탈 위험</span></div></div>
+    <h4>이달의 단골 TOP 5</h4>
+    ${c.top.length ? `<table class="tbl">${c.top.map((t, i) => `<tr><td>${["🥇", "🥈", "🥉", "4", "5"][i]}</td><td>${esc(t.name)}</td><td>${t.visits}회</td></tr>`).join("")}</table>` : `<div class="hint">이번 달 방문 기록이 없어요</div>`}
+    <h4>한 줄 정리</h4>
+    <div class="notice" style="margin:0">${summaryLine(c, p, R)}</div>
+    <div class="hint" style="margin-top:8px">매장 적립 ${c.storeCheckins}회 · 알림톡 ${c.messages}건 발송</div>
+    <button class="btn line block no-print" id="rprint" style="margin-top:16px">🖨️ 인쇄 · PDF로 저장</button></div>`;
+  $("#rprev").onclick = () => { repMonth = shift(-1); report(); };
+  $("#rnext").onclick = () => { repMonth = shift(1); report(); };
+  $("#rprint").onclick = () => window.print();
+}
+function summaryLine(c, p, R) {
+  const parts = [];
+  if (c.newCustomers) parts.push(`새 손님 ${c.newCustomers}명이 왔어요${p.newCustomers ? ` (지난달보다 ${c.newCustomers >= p.newCustomers ? "+" : ""}${c.newCustomers - p.newCustomers}명)` : ""}.`);
+  if (c.visitors) parts.push(`방문 손님 ${c.visitors}명 중 ${c.revisitRate}%가 다시 온 손님이에요.`);
+  if (R.segments.risk) parts.push(`이탈 위험 손님 ${R.segments.risk}명에게 '보고 싶어요 쿠폰'을 보내보세요.`);
+  if (!parts.length) parts.push("아직 데이터가 적어요. 매장 QR과 손님용 링크를 홍보해 보세요!");
+  return parts.join(" ");
 }
 
 async function msg() {
