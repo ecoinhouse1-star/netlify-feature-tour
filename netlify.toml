@@ -1,0 +1,38 @@
+[build]
+  publish = "site"
+  functions = "netlify/functions"
+  command = "echo 'no build step'"
+
+[functions]
+  node_bundler = "esbuild"
+
+# 깔끔한 주소 → 실제 화면 파일
+[[redirects]]
+  from = "/s/*"
+  to = "/store.html"
+  status = 200
+
+[[redirects]]
+  from = "/c/*"
+  to = "/coupon.html"
+  status = 200
+
+[[redirects]]
+  from = "/owner/poster"
+  to = "/poster.html"
+  status = 200
+
+[[redirects]]
+  from = "/owner"
+  to = "/owner.html"
+  status = 200
+
+[[redirects]]
+  from = "/me"
+  to = "/me.html"
+  status = 200
+
+[[redirects]]
+  from = "/join"
+  to = "/join.html"
+  status = 200

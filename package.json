@@ -1,17 +1,14 @@
 {
-  "name": "@example/starter",
-  "version": "0.0.1",
+  "name": "coupon-town",
+  "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "description": "우리동네 쿠폰마을 - 소상공인 단골 만들기 쿠폰·CRM 서비스",
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview"
+    "dev": "node dev-server.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
-  "devDependencies": {
-    "@astrojs/preact": "^1.0.2",
-    "@astrojs/sitemap": "^1.0.0",
-    "@netlify/netlify-marketing-tokens": "^1.1.0",
-    "astro": "^2.0.0"
+  "dependencies": {
+    "@netlify/blobs": "^8.2.0"
   }
 }

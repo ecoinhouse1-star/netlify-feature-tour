@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+<title>마이페이지 · 우리동네 쿠폰마을</title>
+</head>
+<body>
+<div class="app">
+  <header class="topbar left"><h1>마이페이지</h1></header>
+  <div id="root"><div class="empty">불러오는 중…</div></div>
+</div>
+<script type="module">
+import { $, $$, api, esc, tabbar, openLogin, fmtDate, KIND, toast } from "/js/common.js";
+tabbar("me");
+let tab = "active";
+
+async function load() {
+  const d = await api("/api/me");
+  if (!d.customer) {
+    $("#root").innerHTML = `<div class="empty"><div class="e">🎟️</div><b style="color:#222;font-size:18px">로그인하고 쿠폰을 모아보세요</b><br>받은 쿠폰과 단골 등급을 여기서 볼 수 있어요<br><br><button class="btn red" id="login">로그인 / 가입</button></div>
+      <div style="padding:0 18px"><a class="btn line block" style="display:grid;place-items:center" href="/owner">사장님이세요? 가게 관리하기</a></div>`;
+    $("#login").onclick = async () => { if (await openLogin({ title: "쿠폰마을 시작하기", desc: "휴대폰 번호로 1분 만에 가입돼요." })) load(); };
+    return;
+  }
+  const c = d.customer, g = c.grade;
+  const groups = { active: d.coupons.filter((x) => x.status === "active"), done: d.coupons.filter((x) => x.status !== "active") };
+  const pct = g.next ? Math.min(100, (g.visits / (g.visits + g.next.need)) * 100) : 100;
+  $("#root").innerHTML = `
+    <div class="profile"><div class="avatar">${g.emoji}</div><div><b style="font-size:19px">${esc(c.name || "이웃")}님</b><div class="hint">${esc(c.phone || "휴대폰 미등록")}</div></div></div>
+    <div class="grade-card"><b>${g.emoji} ${g.name}</b> · 스탬프 ${g.visits}개
+      <div class="progress"><i style="width:${pct}%"></i></div>
+      <div class="hint">${g.next ? `${g.next.need}번 더 쿠폰을 쓰면 <b>${g.next.name}</b>! 등급 전용 히든 메뉴가 열려요` : "최고 등급! 가게마다 VIP 히든 쿠폰을 받아보세요"}</div>
+    </div>
+    ${!c.hasPhone ? `<div class="notice">알림톡을 받으려면 휴대폰 번호를 등록해 주세요. <button class="btn sm red" id="addphone" style="margin-top:8px">번호 등록</button></div>` : ""}
+    <div class="seg" style="margin-top:18px"><button class="${tab === "active" ? "on" : ""}" data-tab="active">사용 가능 ${groups.active.length}</button><button class="${tab === "done" ? "on" : ""}" data-tab="done">지난 쿠폰 ${groups.done.length}</button></div>
+    <div>${groups[tab].length ? groups[tab].map((x) => `<a class="list-coupon" href="/c/${x.id}"><div class="ic">${KIND[x.kind]?.emoji || "🎟️"}</div><div class="t"><b>${esc(x.benefit)}</b><small>${esc(x.storeName)} · ${KIND[x.kind]?.name} · ${x.status === "active" ? fmtDate(x.expiresAt) + "까지" : x.status === "used" ? "사용 완료" : "만료"}</small></div></a>`).join("") : `<div class="empty">쿠폰이 없어요<br><a href="/" style="color:var(--red)">동네 쿠폰 보러 가기 →</a></div>`}</div>
+    <div class="section">
+      <label class="check" style="margin:0"><input type="checkbox" id="mkt" ${c.marketing ? "checked" : ""}><span>혜택·이벤트 알림 받기<br><small class="hint">끄면 골든타임·시크릿 쿠폰 알림이 오지 않아요 (수신거부)</small></span></label>
+    </div>
+    <div class="section" style="display:grid;gap:8px">
+      <a class="btn line block" style="display:grid;place-items:center" href="/region.html">관심 지역 설정</a>
+      <a class="btn line block" style="display:grid;place-items:center" href="/owner">사장님 가게 관리</a>
+      <button class="btn line block" id="logout">로그아웃</button>
+    </div>`;
+  $$("[data-tab]").forEach((b) => (b.onclick = () => { tab = b.dataset.tab; load(); }));
+  $("#mkt").onchange = async (e) => { await api("/api/me", { method: "PATCH", body: { marketing: e.target.checked } }); toast(e.target.checked ? "알림을 켰어요" : "알림 수신을 거부했어요"); };
+  $("#logout").onclick = async () => { await api("/api/auth/logout", { method: "POST" }); load(); };
+  const ap = $("#addphone"); if (ap) ap.onclick = async () => { if (await openLogin({ title: "휴대폰 번호 등록", desc: "쿠폰 알림톡을 받을 번호를 인증해 주세요." })) load(); };
+}
+load().catch((e) => toast(e.message));
+</script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>내 쿠폰 · 우리동네 쿠폰마을</title>
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app no-tab">
+  <header class="topbar bordered has-two">
+    <button class="icon-btn" id="back" aria-label="뒤로"></button>
+    <h1>쿠폰</h1>
+    <span></span><span></span>
+  </header>
+  <div id="root"><div class="empty">불러오는 중…</div></div>
+</div>
+<button class="cta" id="cta" style="display:none">직원 확인 (사용 처리)</button>
+<script type="module">
+import { $, api, esc, ICON, toast, fmtDate, leftText, KIND, cardHTML } from "/js/common.js";
+
+const cid = decodeURIComponent(location.pathname.split("/")[2] || "");
+$("#back").innerHTML = ICON.back;
+$("#back").onclick = () => (history.length > 1 ? history.back() : (location.href = "/me"));
+let d;
+
+// 쿠폰 번호로 만든 간단한 바코드 모양 (직원 눈 확인용)
+function barcode(code) {
+  let x = 0, bars = "";
+  for (const ch of (code + code).split("")) {
+    const n = ch.charCodeAt(0);
+    for (let i = 0; i < 4; i++) {
+      const w = ((n >> i) & 1) + 1;
+      if (i % 2 === 0) bars += `<rect x="${x}" y="0" width="${w}" height="60"/>`;
+      x += w + 1;
+    }
+  }
+  return `<svg class="barcode" viewBox="0 0 ${x} 60" preserveAspectRatio="none">${bars}</svg>`;
+}
+
+async function load() {
+  d = await api(`/api/coupons/${encodeURIComponent(cid)}`);
+  render();
+}
+
+function render() {
+  const { coupon: c, store: s } = d;
+  const k = KIND[c.kind] || { name: "쿠폰", emoji: "🎟️" };
+  const statusText = { active: "사용 가능", used: "사용 완료", expired: "기간 만료" }[c.status];
+  $("#root").innerHTML = `
+    <div class="coupon-box">
+      <div class="coupon-top ${c.kind}">
+        <small>${k.emoji} ${k.name} · ${esc(s?.name || c.storeName)}</small>
+        <h2>${esc(c.benefit)}</h2>
+        <small>${esc(c.title)}</small>
+      </div>
+      <div class="coupon-mid">
+        <span class="status-pill ${c.status}">${statusText}</span>
+        ${barcode(c.id.toUpperCase())}
+        <div class="code">${c.id.toUpperCase()}</div>
+        <div class="hint" style="margin-top:10px">${c.status === "active" ? `${fmtDate(c.expiresAt)}까지 · 남은 시간 <span class="countdown" id="cd"></span>` : c.status === "used" ? `${new Date(c.usedAt).toLocaleString("ko-KR")} 사용` : "유효기간이 지났어요"}</div>
+      </div>
+    </div>
+    ${c.status === "active" ? `<div class="notice">💡 계산할 때 이 화면을 직원에게 보여주세요. 직원이 아래 <b>직원 확인</b> 버튼을 눌러 사용 처리해요.</div>` : ""}
+    ${s ? `<div class="section"><h3 class="h2">매장 정보</h3>
+      <div class="row-kv"><b>매장</b><a class="v" href="/s/${esc(s.slug)}" style="color:var(--blue)">${esc(s.name)}</a><span></span></div>
+      ${s.address ? `<div class="row-kv"><b>주소</b><span class="v">${esc(s.address)}</span><span></span></div>` : ""}
+      ${s.phone ? `<div class="row-kv"><b>연락처</b><a class="v" href="tel:${esc(s.phone)}">${esc(s.phone)}</a><span></span></div>` : ""}
+      <a class="btn line block" style="display:grid;place-items:center;margin-top:10px" target="_blank" rel="noopener" href="https://map.naver.com/p/search/${encodeURIComponent(s.address || s.name)}">길찾기</a>
+    </div>` : ""}`;
+  if (c.status === "active") {
+    const tick = () => { const el = $("#cd"); if (el) el.textContent = leftText(c.expiresAt - Date.now()); };
+    tick();
+    setInterval(tick, 1000);
+    $("#cta").style.display = "grid";
+    $("#cta").onclick = staffSheet;
+  } else {
+    $("#cta").style.display = "grid";
+    $("#cta").textContent = "우리 동네 다른 쿠폰 보기";
+    $("#cta").classList.add("dark");
+    $("#cta").onclick = () => (location.href = "/");
+  }
+}
+
+function staffSheet() {
+  const bg = document.createElement("div");
+  bg.className = "sheet-bg show";
+  const sh = document.createElement("div");
+  sh.className = "sheet";
+  sh.innerHTML = `
+    <h3>직원 확인</h3>
+    <div class="hint" style="font-size:15px">직원분이 가게 확인 번호 4자리를 입력해 주세요.</div>
+    <input class="input" id="pin" type="password" inputmode="numeric" maxlength="4" style="margin-top:14px;text-align:center;font-size:28px;letter-spacing:12px" autocomplete="off">
+    <div class="err" id="perr"></div>
+    <button class="btn red block" id="pok">사용 처리하기</button>
+    <button class="btn line block" id="pcancel" style="margin-top:8px">취소</button>`;
+  document.body.append(bg, sh);
+  requestAnimationFrame(() => sh.classList.add("show"));
+  const close = () => { sh.remove(); bg.remove(); };
+  bg.onclick = close;
+  $("#pcancel", sh).onclick = close;
+  $("#pin", sh).focus();
+  $("#pok", sh).onclick = async () => {
+    try {
+      const r = await api(`/api/coupons/${encodeURIComponent(cid)}/redeem`, { body: { pin: $("#pin", sh).value } });
+      close();
+      showDone(r);
+    } catch (e) {
+      $("#perr", sh).textContent = e.message;
+    }
+  };
+}
+
+// 사용 완료 → 리뷰 유도 + 골든타임 + 이웃가게 쿠폰
+function showDone(r) {
+  $("#cta").style.display = "none";
+  window.scrollTo(0, 0);
+  $("#root").innerHTML = `
+    <div class="done"><div class="big">✅</div><h2>사용 완료!</h2><div class="hint" style="font-size:15px">${esc(r.coupon.benefit)}<br>방문해 주셔서 감사해요 😊</div></div>
+    ${r.review ? `<div class="reward"><h4>📝 리뷰 쓰고 ${esc(r.review.reward)}</h4><div class="hint" style="font-size:14px;color:#335">영수증 리뷰나 네이버 리뷰를 남기고 직원에게 보여주시면 바로 드려요!</div>
+      <a class="btn block" style="display:grid;place-items:center;margin-top:12px;background:#03c75a" href="${esc(r.review.url)}" target="_blank" rel="noopener">네이버 리뷰 쓰러 가기</a></div>` : ""}
+    ${r.golden ? `<div class="reward gold"><h4>⏰ 7일 골든타임 쿠폰이 도착했어요</h4><div style="font-size:16px;font-weight:700">${esc(r.golden.benefit)}</div><div class="hint">${fmtDate(r.golden.expiresAt)}까지 다시 오시면 쓸 수 있어요</div>
+      <a class="btn red block" style="display:grid;place-items:center;margin-top:12px" href="/c/${r.golden.id}">골든타임 쿠폰 보기</a></div>` : ""}
+    ${r.cross ? `<div class="reward blue"><h4>🤝 이웃 가게 선물: ${esc(r.cross.partner.name)}</h4><div style="font-size:16px;font-weight:700">${esc(r.cross.benefit)}</div><div class="hint">${esc(r.cross.partner.region || "")} · ${fmtDate(r.cross.expiresAt)}까지</div>
+      <a class="btn block" style="display:grid;place-items:center;margin-top:12px;background:var(--blue)" href="/c/${r.cross.id}">이웃 쿠폰 보기</a></div>` : ""}
+    <div class="grade-card" style="margin-top:14px"><b>${r.grade.emoji} 내 등급: ${r.grade.name}</b> · 스탬프 ${r.grade.visits}개
+      ${r.grade.next ? `<div class="progress"><i style="width:${Math.min(100, (r.grade.visits / (r.grade.visits + r.grade.next.need)) * 100)}%"></i></div><div class="hint">${r.grade.next.need}번 더 쓰면 ${r.grade.next.name}! 등급 전용 히든 메뉴가 열려요</div>` : `<div class="hint">최고 등급이에요! 가게별 VIP 히든 쿠폰을 확인해 보세요</div>`}
+    </div>
+    <div style="padding:18px"><a class="btn line block" style="display:grid;place-items:center" href="/">우리 동네 다른 가게 보기</a></div>`;
+}
+
+load().catch((e) => ($("#root").innerHTML = `<div class="empty"><div class="e">🎟️</div>${esc(e.message)}</div>`));
+</script>
+</body>
+</html>

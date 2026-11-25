@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>우리동네 쿠폰마을</title>
+<meta name="description" content="내 주변 가게의 할인·이벤트 쿠폰을 한눈에. 우리동네 쿠폰마을">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar brand">
+    <a href="/" class="brand-logo"><img src="/img/logo-96.png" alt="우리동네 쿠폰마을 로고" width="40" height="40"><span>우리동네 <b>쿠폰마을</b></span></a>
+    <a class="join-link" href="/join">사장님 입점</a>
+    <button class="icon-btn" id="btn-search" aria-label="검색"></button>
+  </header>
+  <div id="search-wrap" style="display:none;padding:0 18px 8px"><input class="input" id="q" placeholder="가게 이름·메뉴·동네 검색"></div>
+  <div class="cats" id="cats"></div>
+  <div class="chipbar">
+    <div class="chips" id="chips"></div>
+    <button class="filter-btn" id="btn-filter" aria-label="필터"></button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none"><div class="e">🔍</div>조건에 맞는 가게가 없어요</div>
+</div>
+<button class="fab" id="fab"></button>
+<script type="module">
+import { $, api, config, cardHTML, bindLikes, tabbar, ICON, toast } from "/js/common.js";
+import { myRegions, regionLabel, matchRegion } from "/js/regions.js";
+
+tabbar("home");
+$("#btn-search").innerHTML = ICON.search;
+$("#btn-filter").innerHTML = ICON.filter;
+$("#fab").innerHTML = `${ICON.pin}<span>내 주변</span>`;
+
+const params = new URLSearchParams(location.search);
+if (params.get("search")) setTimeout(() => $("#btn-search").click(), 0);
+const state = { cat: params.get("cat") || "", sub: params.get("sub") || "", regions: myRegions(), chip: "", sort: "", q: "", here: null };
+let stores = [];
+
+const cfg = await config();
+$("#cats").innerHTML = cfg.categories.map((c) => `<button class="cat ${state.cat === c.key ? "on" : ""}" data-cat="${c.key}"><div class="tile">${c.emoji}</div><span>${c.name}</span></button>`).join("");
+$("#cats").onclick = (e) => {
+  const b = e.target.closest("[data-cat]");
+  if (!b) return;
+  state.cat = state.cat === b.dataset.cat ? "" : b.dataset.cat;
+  state.sub = "";
+  document.querySelectorAll("#cats .cat").forEach((x) => x.classList.toggle("on", x.dataset.cat === state.cat));
+  render();
+};
+
+const CHIPS = [
+  ["region", ""],
+  ["deadline", "마감 임박"],
+  ["popular", "인기순"],
+  ["golden", "골든타임"],
+  ["nores", "예약 불필요"],
+];
+function renderChips() {
+  $("#chips").innerHTML = CHIPS.map(([k, label]) => {
+    if (k === "region") return `<a class="chip" href="/region.html">${regionLabel(state.regions)} ${ICON.down}</a>`;
+    const on = state.chip === k || state.sort === k;
+    return `<button class="chip ${on ? "on" : ""}" data-chip="${k}">${label}</button>`;
+  }).join("");
+}
+$("#chips").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-chip]");
+  if (!b) return;
+  const k = b.dataset.chip;
+  if (k === "deadline" || k === "popular") state.sort = state.sort === k ? "" : k;
+  else state.chip = state.chip === k ? "" : k;
+  renderChips();
+  render();
+});
+$("#btn-filter").onclick = () => { state.chip = ""; state.sort = ""; state.cat = ""; state.q = ""; $("#q").value = ""; document.querySelectorAll("#cats .cat").forEach((x) => x.classList.remove("on")); renderChips(); render(); toast("필터를 모두 풀었어요"); };
+$("#btn-search").onclick = () => { const w = $("#search-wrap"); w.style.display = w.style.display === "none" ? "block" : "none"; $("#q").focus(); };
+$("#q").oninput = (e) => { state.q = e.target.value.trim(); render(); };
+
+function render() {
+  let list = stores.slice();
+  if (state.cat) list = list.filter((s) => s.category === state.cat);
+  if (state.sub) list = list.filter((s) => s.sub === state.sub);
+  list = list.filter((s) => matchRegion(s, state.regions));
+  if (state.chip === "golden") list = list.filter((s) => s.golden);
+  if (state.chip === "nores") list = list.filter((s) => (s.tags || []).includes("예약불필요"));
+  if (state.q) list = list.filter((s) => [s.name, s.region, s.headline, s.sub].join(" ").includes(state.q));
+  // 진행 중인 이벤트 먼저
+  list.sort((a, b) => (b.eventStatus.active ? 1 : 0) - (a.eventStatus.active ? 1 : 0));
+  if (state.sort === "deadline") list = list.filter((s) => s.eventStatus.active).sort((a, b) => (a.endAt || 9e15) - (b.endAt || 9e15));
+  if (state.sort === "popular") list.sort((a, b) => b.popular - a.popular);
+  if (state.here) list.sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99));
+  $("#grid").innerHTML = list.map(cardHTML).join("");
+  $("#empty").style.display = list.length ? "none" : "block";
+}
+
+async function load() {
+  const q = state.here ? `?lat=${state.here.lat}&lng=${state.here.lng}` : "";
+  stores = (await api("/api/stores" + q)).stores;
+  renderChips();
+  render();
+}
+
+$("#fab").onclick = () => {
+  if (state.here) { state.here = null; $("#fab").classList.remove("on"); load(); return; }
+  if (!navigator.geolocation) return toast("위치 기능을 쓸 수 없는 기기예요");
+  toast("내 위치를 찾는 중…");
+  navigator.geolocation.getCurrentPosition(
+    (p) => { state.here = { lat: p.coords.latitude, lng: p.coords.longitude }; $("#fab").classList.add("on"); load().then(() => toast("가까운 순으로 정렬했어요")); },
+    () => toast("위치 권한을 허용해 주세요"),
+    { timeout: 8000 },
+  );
+};
+
+bindLikes();
+load().catch((e) => toast(e.message));
+</script>
+</body>
+</html>

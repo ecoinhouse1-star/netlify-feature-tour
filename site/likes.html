@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+<title>관심목록 · 우리동네 쿠폰마을</title>
+</head>
+<body>
+<div class="app">
+  <header class="topbar left"><h1>관심목록</h1></header>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none"><div class="e">🤍</div>하트를 누른 가게가 여기에 모여요<br><a href="/" style="color:var(--red)">동네 가게 보러 가기 →</a></div>
+</div>
+<script type="module">
+import { $, api, cardHTML, likes, bindLikes, tabbar } from "/js/common.js";
+tabbar("like");
+bindLikes();
+const mine = likes();
+const { stores } = await api("/api/stores");
+const list = stores.filter((s) => mine.includes(s.slug));
+$("#grid").innerHTML = list.map(cardHTML).join("");
+$("#empty").style.display = list.length ? "none" : "block";
+</script>
+</body>
+</html>

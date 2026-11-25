@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>가게 쿠폰 받기 · 우리동네 쿠폰마을</title>
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app no-tab" id="app">
+  <header class="topbar bordered has-two detail-top" id="dtop">
+    <button class="icon-btn" data-act="back" aria-label="뒤로"></button>
+    <h1 id="dtitle"></h1>
+    <button class="icon-btn" data-act="share" aria-label="공유"></button>
+    <button class="icon-btn heart-top" data-act="like" aria-label="관심"></button>
+  </header>
+  <div id="root"><div class="empty">불러오는 중…</div></div>
+</div>
+<button class="cta" id="cta" disabled>쿠폰 받기</button>
+<script type="module">
+import { $, $$, api, esc, ICON, cardHTML, bindLikes, likes, toggleLike, toast, copyText, share, openLogin, fmtDate, leftText, KIND } from "/js/common.js";
+
+const slug = decodeURIComponent(location.pathname.split("/")[2] || "");
+let data;
+
+$$("[data-act=back]").forEach((b) => (b.innerHTML = ICON.back));
+$$("[data-act=share]").forEach((b) => (b.innerHTML = ICON.share));
+$$("[data-act=like]").forEach((b) => (b.innerHTML = ICON.heart));
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const a = b.dataset.act;
+  if (a === "back") history.length > 1 ? history.back() : (location.href = "/");
+  if (a === "share") share(data?.store?.name || "쿠폰마을");
+  if (a === "like") {
+    const on = toggleLike(slug);
+    paintLike();
+    toast(on ? "관심목록에 담았어요" : "관심목록에서 뺐어요");
+  }
+});
+function paintLike() {
+  const on = likes().includes(slug);
+  $$("[data-act=like]").forEach((b) => { b.style.color = on ? "var(--red)" : ""; b.querySelector("svg").style.fill = on ? "var(--red)" : "none"; });
+}
+
+window.addEventListener("scroll", () => $("#dtop").classList.toggle("show", scrollY > 300));
+
+async function load() {
+  data = await api(`/api/stores/${encodeURIComponent(slug)}`);
+  render();
+}
+
+function render() {
+  const { store: s, mine, similar } = data;
+  document.title = `${s.name} · 우리동네 쿠폰마을`;
+  $("#dtitle").textContent = s.name;
+  const photos = s.photos?.length ? s.photos : ["/img/placeholder.svg"];
+  const st = s.eventStatus;
+  const ev = s.event || {};
+  const tags = (s.tags || []).map((t) => `<span class="tag ${t === "예약불필요" ? "blue" : t === "골든타임" ? "red" : ""}">${esc(t)}</span>`).join("");
+  const golden = s.golden?.enabled && s.golden.benefit;
+  const menuRows = (s.menu || []).map((m) => `<div class="menu-item"><span>${esc(m.name)}</span><span>${esc(m.price || "")}</span></div>`).join("");
+  const mapQ = s.lat ? `https://www.openstreetmap.org/export/embed.html?bbox=${s.lng - 0.004},${s.lat - 0.0025},${s.lng + 0.004},${s.lat + 0.0025}&layer=mapnik&marker=${s.lat},${s.lng}` : "";
+  const naverMap = `https://map.naver.com/p/search/${encodeURIComponent(s.address || s.name)}`;
+  const grade = mine?.grade;
+
+  $("#root").innerHTML = `
+  <div class="hero">
+    <div class="slides" id="slides">${photos.map((p) => `<img src="${esc(p)}" alt="">`).join("")}</div>
+    <div class="over">
+      <button class="icon-btn" data-act="back" aria-label="뒤로">${ICON.back}</button>
+      <div style="display:flex"><button class="icon-btn" data-act="share" aria-label="공유">${ICON.share}</button><button class="icon-btn" data-act="like" aria-label="관심">${ICON.heart}</button></div>
+    </div>
+    <div class="count" id="count">1 / ${photos.length}</div>
+  </div>
+
+  <div class="section" style="padding-top:18px">
+    ${tags ? `<div class="tags" style="margin-top:0">${tags}</div>` : ""}
+    <div class="loc">${ICON.pinLine}${esc(s.region || "")}</div>
+    <h2 class="title">${esc(s.name)}</h2>
+    <div class="price"><span class="red">${esc(s.headline || ev.benefit || "")}</span>${esc(s.headlineSub || "")}</div>
+    ${s.note ? `<div class="note">${esc(s.note)}</div>` : ""}
+    ${st.active && ev.endAt ? `<div class="link-red">⏳ 이벤트 마감까지 <span class="countdown" id="cd"></span></div>` : `<div class="note">${esc(st.label)}</div>`}
+    ${s.intro ? `<p class="lead">${esc(s.intro.split("\n")[0].slice(0, 60))}</p>` : ""}
+  </div>
+
+  <div class="section" style="padding:14px 24px">
+    <div class="row-kv"><span class="k-ico">${ICON.cal} 예약 여부</span><span class="v blue">${esc(s.reservation || "예약 불필요")}</span><span></span></div>
+  </div>
+
+  ${mine?.active?.length ? `<div class="section"><h3 class="h2">내 쿠폰</h3>
+    ${mine.active.map((c) => `<a class="list-coupon" style="padding:12px 0" href="/c/${c.id}"><div class="ic">${KIND[c.kind]?.emoji || "🎟️"}</div><div class="t"><b>${esc(c.benefit)}</b><small>${KIND[c.kind]?.name} · ${fmtDate(c.expiresAt)}까지</small></div>${ICON.right.replace("<svg", '<svg style="width:20px;stroke:#999;fill:none;stroke-width:2"')}</a>`).join("")}
+  </div>` : ""}
+
+  ${s.intro ? `<div class="section"><h3 class="h2">매장 소개</h3><div class="clamp" id="intro">${esc(s.intro)}</div><button class="more" data-more="intro">${ICON.down.replace("<svg", '<svg style="width:18px;stroke:var(--red);fill:none;stroke-width:2.4"')} 소개 더보기</button></div>` : ""}
+
+  ${menuRows ? `<div class="section"><h3 class="h2">대표 메뉴</h3><div class="clamp" id="menu" style="-webkit-line-clamp:unset;max-height:${(s.menu.length > 3 ? 3 * 44 : 999)}px">${menuRows}</div>${s.menu.length > 3 ? `<button class="more" data-more="menu">${ICON.down.replace("<svg", '<svg style="width:18px;stroke:var(--red);fill:none;stroke-width:2.4"')} 메뉴 더보기</button>` : ""}</div>` : ""}
+
+  <div class="section"><h3 class="h2">매장 정보</h3>
+    ${s.phone ? `<div class="row-kv"><b>연락처</b><span class="v">${esc(s.phone)}</span><a class="copy-btn" href="tel:${esc(s.phone)}" aria-label="전화">${ICON.ext}</a></div>` : ""}
+    ${s.address ? `<div class="row-kv"><b>주소</b><span class="v">${esc(s.address)}</span><button class="copy-btn" data-copy="${esc(s.address)}" aria-label="복사">${ICON.copy}</button></div>` : ""}
+    ${mapQ ? `<iframe class="map" src="${mapQ}" loading="lazy" title="지도"></iframe>` : ""}
+    <a class="btn line block" style="display:grid;place-items:center;margin-top:10px" href="${naverMap}" target="_blank" rel="noopener">네이버 지도로 길찾기</a>
+  </div>
+
+  <div class="section"><h3 class="h2">쿠폰 이용 안내</h3>
+    <div class="row-kv"><b>쿠폰 혜택</b><span class="v">${esc(ev.benefit || "-")}</span><span></span></div>
+    <div class="row-kv"><b>사용 기한</b><span class="v">받은 날부터 ${esc(ev.couponDays || 14)}일${ev.endAt ? ` (이벤트 ${fmtDate(ev.endAt)} 종료)` : ""}</span><span></span></div>
+    ${ev.limit ? `<div class="row-kv"><b>수량</b><span class="v">선착순 ${ev.limit}명</span><span></span></div>` : ""}
+    <div class="row-kv"><b>사용 방법</b><span class="v">계산할 때 쿠폰 화면을 보여주시면 직원이 확인해 드려요.</span><span></span></div>
+    ${golden ? `<div class="row-kv"><b>재방문 선물</b><span class="v">쿠폰 사용 후 <b style="color:var(--red)">7일 안에</b> 다시 오시면 <b>${esc(s.golden.benefit)}</b></span><span></span></div>` : ""}
+    ${s.reviewReward ? `<div class="row-kv"><b>리뷰 혜택</b><span class="v">영수증·네이버 리뷰 작성 시 ${esc(s.reviewReward)}</span><span></span></div>` : ""}
+    ${(s.keywords || []).length ? `<div class="row-kv"><b>리뷰 키워드</b><span class="v">아래 키워드 중 하나를 리뷰에 넣어주세요.<div style="margin-top:8px">${s.keywords.map((k) => `<span class="kw">${esc(k)}<button class="copy-btn" data-copy="${esc(k)}" aria-label="복사" style="color:#2a4fa0">${ICON.copy.replace("<svg", '<svg style="width:18px;height:18px"')}</button></span>`).join("")}</div></span><span></span></div>` : ""}
+  </div>
+
+  ${s.hiddenInfo.regular || s.hiddenInfo.vip ? `<div class="section"><h3 class="h2">단골 등급 히든 쿠폰 🔒</h3>
+    <div class="note" style="margin-top:0">쿠폰을 쓸 때마다 스탬프가 쌓여 등급이 올라가요.<br>🌱 신규 주민 → 🏡 단골 이웃(2회) → 👑 동네 VIP(5회)</div>
+    ${grade ? `<div class="grade-card" style="margin:14px 0 0"><b>${grade.emoji} 지금 내 등급: ${grade.name}</b> · 방문 ${grade.visits}회${grade.next ? `<div class="hint">${grade.next.need}번 더 방문하면 ${grade.next.name}!</div>` : ""}</div>` : ""}
+    <button class="btn ${mine?.hiddenOpen ? "red" : "line"} block" id="btn-hidden" style="margin-top:14px">${mine?.hiddenOpen ? "히든 쿠폰 열기" : "등급이 오르면 열려요"}</button>
+  </div>` : ""}
+
+  <div class="section"><h3 class="h2">이용 전에 꼭 확인해주세요!</h3>
+    <ol class="ol">
+      ${(s.notices?.length ? s.notices : ["쿠폰은 1인 1회 사용할 수 있어요.", "다른 할인·쿠폰과 함께 쓸 수 없어요.", "결제 전에 쿠폰을 먼저 보여주세요.", "쿠폰 받기 시 휴대폰 번호로 쿠폰 안내 알림톡이 발송돼요."]).map((n) => `<li>${esc(n)}</li>`).join("")}
+    </ol>
+  </div>
+
+  ${similar?.length ? `<div class="section" style="padding-left:0;padding-right:0"><h3 class="h2" style="margin-left:24px">비슷한 동네 가게 어때요?</h3><div class="grid" style="padding-top:0">${similar.map(cardHTML).join("")}</div></div>` : ""}
+  `;
+
+  // 사진 넘김 카운터
+  const sl = $("#slides");
+  sl.addEventListener("scroll", () => { $("#count").textContent = `${Math.round(sl.scrollLeft / sl.clientWidth) + 1} / ${photos.length}`; });
+  // 카운트다운
+  if (st.active && ev.endAt) {
+    const tick = () => { const el = $("#cd"); if (el) el.textContent = leftText(ev.endAt - Date.now()); };
+    tick();
+    clearInterval(window._cd);
+    window._cd = setInterval(tick, 1000);
+  }
+  $$("[data-more]").forEach((b) => (b.onclick = () => {
+    const el = $("#" + b.dataset.more);
+    el.classList.add("open");
+    el.style.maxHeight = "none";
+    b.remove();
+  }));
+  $$("[data-copy]").forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  const hb = $("#btn-hidden");
+  if (hb) hb.onclick = claimHidden;
+  paintLike();
+  paintCTA();
+}
+
+function paintCTA() {
+  const { store: s, mine } = data;
+  const cta = $("#cta");
+  const ev = mine?.eventCoupon;
+  cta.disabled = false;
+  cta.classList.remove("dark");
+  if (ev && ev.status === "active") { cta.textContent = "내 쿠폰 사용하기"; cta.onclick = () => (location.href = `/c/${ev.id}`); cta.classList.add("dark"); return; }
+  if (ev && ev.status === "used") { cta.textContent = "이미 사용한 쿠폰이에요 · 다른 가게 보기"; cta.onclick = () => (location.href = "/"); cta.classList.add("dark"); return; }
+  if (!s.eventStatus.active) { cta.textContent = s.eventStatus.upcoming ? "곧 오픈해요" : "이벤트가 끝났어요"; cta.disabled = true; return; }
+  cta.textContent = "쿠폰 받기";
+  cta.onclick = getCoupon;
+}
+
+async function ensureLogin() {
+  if (data.loggedIn) return true;
+  const c = await openLogin();
+  if (!c) return false;
+  data.loggedIn = true;
+  return true;
+}
+
+async function getCoupon() {
+  if (!(await ensureLogin())) return;
+  try {
+    const r = await api(`/api/stores/${encodeURIComponent(slug)}/coupon`, { method: "POST" });
+    await load();
+    showIssued(r.coupon, r.already);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function claimHidden() {
+  if (!(await ensureLogin())) return;
+  try {
+    const r = await api(`/api/stores/${encodeURIComponent(slug)}/hidden`, { method: "POST" });
+    location.href = `/c/${r.coupon.id}`;
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function showIssued(c, already) {
+  const bg = document.createElement("div");
+  bg.className = "sheet-bg show";
+  const sh = document.createElement("div");
+  sh.className = "sheet";
+  sh.innerHTML = `
+    <div style="text-align:center">
+      <div style="font-size:52px">🎉</div>
+      <h3>${already ? "이미 받은 쿠폰이에요" : "쿠폰이 발급됐어요!"}</h3>
+      <div class="hint" style="font-size:15px">${esc(c.benefit)}<br>${fmtDate(c.expiresAt)}까지 사용 가능 · 알림톡으로도 보내드렸어요</div>
+    </div>
+    <a class="btn red block" style="display:grid;place-items:center;margin-top:18px" href="/c/${c.id}">쿠폰 보기</a>
+    <a class="btn line block" style="display:grid;place-items:center;margin-top:8px" href="/">우리 동네 다른 할인 가게도 보기 →</a>`;
+  document.body.append(bg, sh);
+  requestAnimationFrame(() => sh.classList.add("show"));
+  bg.onclick = () => { sh.remove(); bg.remove(); };
+}
+
+bindLikes($("#root"));
+load().catch((e) => ($("#root").innerHTML = `<div class="empty"><div class="e">🏚️</div>${esc(e.message)}<br><br><a class="btn line" href="/" style="display:inline-grid;place-items:center">홈으로</a></div>`));
+if (new URLSearchParams(location.search).get("login")) toast("로그인됐어요. 쿠폰 받기를 눌러주세요!");
+</script>
+</body>
+</html>

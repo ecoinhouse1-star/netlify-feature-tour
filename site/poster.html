@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>홍보물 만들기 · 우리동네 쿠폰마을</title>
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+<script src="/js/qrcode.js"></script>
+<style>
+  canvas { width: 100%; height: auto; border-radius: 14px; background: #eee; display: block; }
+  .picks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .picks button { aspect-ratio: 1; border-radius: 12px; border: 1.5px dashed #c9c9ce; overflow: hidden; font-size: 28px; color: #9a9aa0; background: #fff center/cover no-repeat; }
+</style>
+</head>
+<body>
+<div class="app no-tab" style="padding-bottom:40px">
+  <header class="topbar bordered has-two">
+    <a class="icon-btn" href="/owner?tab=promo" id="back" aria-label="뒤로"></a>
+    <h1>홍보물 만들기</h1><span></span><span></span>
+  </header>
+  <div class="panel">
+    <h4>1. 음식 사진 3장</h4>
+    <div class="picks" id="picks"><button data-i="0">+</button><button data-i="1">+</button><button data-i="2">+</button></div>
+    <input type="file" accept="image/*" id="file" hidden>
+    <h4>2. 문구</h4>
+    <div class="field"><label>큰 문구 (할인율)</label><input class="input" id="big" placeholder="예: 7주년 30% 할인"></div>
+    <div class="field"><label>작은 문구</label><input class="input" id="small" placeholder="예: 이번 주 일요일까지!"></div>
+    <button class="btn red block" id="make" style="margin-top:16px">만들기</button>
+
+    <h4>📄 매장 부착용 QR 포스터</h4>
+    <canvas id="poster" width="1240" height="1754"></canvas>
+    <button class="btn block" id="dlPoster" style="margin-top:8px">포스터 이미지 저장 (인쇄용)</button>
+
+    <h4>🎬 인스타 릴스·쇼츠용 영상 (9초)</h4>
+    <canvas id="reel" width="720" height="1280" style="max-width:300px;margin:0 auto"></canvas>
+    <button class="btn block" id="dlReel" style="margin-top:8px">영상 만들기·저장</button>
+    <div class="hint" id="reelHint">영상은 webm 형식이에요. 인스타·유튜브에 바로 올릴 수 있어요.</div>
+  </div>
+</div>
+<script type="module">
+import { $, $$, api, ICON, toast } from "/js/common.js";
+$("#back").innerHTML = ICON.back;
+let me;
+try { me = await api("/api/owner/me"); } catch { location.href = "/owner"; }
+const s = me.store;
+$("#big").value = s.headline || s.event?.benefit || "";
+$("#small").value = s.event?.title || "";
+const imgs = [null, null, null];
+let logo = null;
+load("/img/logo.png").then((im) => { logo = im; draw(); });
+let pickIdx = 0;
+
+// 가게 사진이 있으면 미리 채워둠
+(s.photos || []).slice(0, 3).forEach((p, i) => load(p).then((im) => { imgs[i] = im; paintPicks(); draw(); }));
+
+function load(src) {
+  return new Promise((res) => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+}
+function paintPicks() {
+  $$("#picks button").forEach((b, i) => { b.style.backgroundImage = imgs[i] ? `url(${imgs[i].src})` : ""; b.textContent = imgs[i] ? "" : "+"; });
+}
+$("#picks").onclick = (e) => { const b = e.target.closest("[data-i]"); if (!b) return; pickIdx = +b.dataset.i; $("#file").click(); };
+$("#file").onchange = async (e) => { const f = e.target.files[0]; if (!f) return; imgs[pickIdx] = await load(URL.createObjectURL(f)); paintPicks(); draw(); e.target.value = ""; };
+$("#make").onclick = draw;
+
+function cover(ctx, im, x, y, w, h, zoom = 1) {
+  if (!im) { ctx.fillStyle = "#ddd"; ctx.fillRect(x, y, w, h); return; }
+  const r = Math.max(w / im.width, h / im.height) * zoom;
+  const iw = im.width * r, ih = im.height * r;
+  ctx.drawImage(im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+}
+function wrap(ctx, text, x, y, maxW, lh) {
+  let line = "", yy = y;
+  for (const ch of text) {
+    if (ctx.measureText(line + ch).width > maxW && line) { ctx.fillText(line, x, yy); line = ch; yy += lh; } else line += ch;
+  }
+  ctx.fillText(line, x, yy);
+  return yy;
+}
+function qrCanvas(size) {
+  const q = qrcode(0, "M");
+  q.addData(me.link);
+  q.make();
+  const n = q.getModuleCount();
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, size, size);
+  const cell = size / (n + 4);
+  g.fillStyle = "#111";
+  for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) if (q.isDark(r, col)) g.fillRect((col + 2) * cell, (r + 2) * cell, Math.ceil(cell), Math.ceil(cell));
+  return c;
+}
+const FONT = 'Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+
+function draw() {
+  const c = $("#poster"), g = c.getContext("2d"), W = c.width, H = c.height;
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+  // 위쪽 사진 3장
+  cover(g, imgs[0], 0, 0, W, 760);
+  cover(g, imgs[1], 0, 770, W / 2 - 5, 380);
+  cover(g, imgs[2], W / 2 + 5, 770, W / 2 - 5, 380);
+  // 빨간 띠
+  g.fillStyle = "#e2232e"; g.fillRect(0, 1150, W, 604);
+  g.fillStyle = "#fff"; g.textBaseline = "top";
+  g.font = `600 44px ${FONT}`; g.fillText(s.name, 70, 1195);
+  g.font = `900 104px ${FONT}`; const y = wrap(g, $("#big").value || " ", 70, 1260, 680, 112);
+  g.font = `500 44px ${FONT}`; g.fillText($("#small").value, 70, y + 130);
+  if (logo) g.drawImage(logo, 70, 1625, 90, 90);
+  g.font = `500 32px ${FONT}`; g.globalAlpha = .9; g.fillText("QR 찍고 쿠폰 받기 · 우리동네 쿠폰마을", logo ? 175 : 70, 1655); g.globalAlpha = 1;
+  // QR
+  g.fillStyle = "#fff"; g.beginPath(); g.roundRect(800, 1200, 380, 430, 28); g.fill();
+  g.drawImage(qrCanvas(340), 820, 1220);
+  g.fillStyle = "#e2232e"; g.font = `800 34px ${FONT}`; g.textAlign = "center"; g.fillText("쿠폰 받기", 990, 1572); g.textAlign = "left";
+  drawReel(0);
+}
+
+function drawReel(t) {
+  const c = $("#reel"), g = c.getContext("2d"), W = c.width, H = c.height;
+  const i = Math.min(2, Math.floor(t / 3));
+  const local = (t % 3) / 3;
+  g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+  cover(g, imgs[i] || imgs[0], 0, 0, W, H, 1 + local * 0.12);
+  const grd = g.createLinearGradient(0, H * 0.45, 0, H); grd.addColorStop(0, "rgba(0,0,0,0)"); grd.addColorStop(1, "rgba(0,0,0,.8)");
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  g.textBaseline = "top"; g.fillStyle = "#fff";
+  g.font = `700 36px ${FONT}`; g.fillText(`📍 ${s.region || ""} ${s.name}`, 48, 860);
+  const a = Math.min(1, local * 3);
+  g.globalAlpha = a;
+  g.font = `900 80px ${FONT}`; const y = wrap(g, $("#big").value || " ", 48, 920, 620, 90);
+  g.font = `600 36px ${FONT}`; g.fillText($("#small").value, 48, y + 100);
+  g.globalAlpha = 1;
+  if (logo) g.drawImage(logo, W - 140, 40, 100, 100);
+  if (i === 2) {
+    g.fillStyle = "#e2232e"; g.beginPath(); g.roundRect(48, 1150, 624, 84, 42); g.fill();
+    g.fillStyle = "#fff"; g.font = `800 34px ${FONT}`; g.textAlign = "center"; g.fillText("프로필 링크에서 쿠폰 받기 👆", W / 2, 1172); g.textAlign = "left";
+  }
+}
+
+$("#dlPoster").onclick = () => {
+  const a = document.createElement("a");
+  a.download = `${s.slug}-qr-poster.png`;
+  a.href = $("#poster").toDataURL("image/png");
+  a.click();
+};
+
+$("#dlReel").onclick = async () => {
+  const c = $("#reel");
+  if (!c.captureStream || !window.MediaRecorder) return toast("이 브라우저는 영상 저장을 지원하지 않아요 (크롬 권장)");
+  const stream = c.captureStream(30);
+  const rec = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" : "video/webm" });
+  const chunks = [];
+  rec.ondataavailable = (e) => chunks.push(e.data);
+  rec.onstop = () => {
+    const a = document.createElement("a");
+    a.download = `${s.slug}-reels.webm`;
+    a.href = URL.createObjectURL(new Blob(chunks, { type: "video/webm" }));
+    a.click();
+    $("#reelHint").textContent = "저장 완료! 인스타 릴스·유튜브 쇼츠에 올려보세요.";
+  };
+  rec.start();
+  $("#reelHint").textContent = "영상 만드는 중… (9초)";
+  const t0 = performance.now();
+  const loop = () => {
+    const t = (performance.now() - t0) / 1000;
+    drawReel(Math.min(t, 8.99));
+    if (t < 9) requestAnimationFrame(loop); else rec.stop();
+  };
+  loop();
+};
+
+draw();
+</script>
+</body>
+</html>
