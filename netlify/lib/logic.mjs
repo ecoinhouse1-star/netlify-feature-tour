@@ -431,17 +431,80 @@ function dailySeries(coupons) {
   return days;
 }
 
+// ---------------- 신규·단골 고객관리 ----------------
+// 쿠폰만 받고 안 옴 → 신규(1회) → 단골(2회+), 30일 넘게 안 오면 이탈 위험
+export const SEGMENTS = {
+  waiting: { name: "방문 전", desc: "쿠폰만 받고 아직 안 온 손님", action: "방문 유도 쿠폰" },
+  new: { name: "신규", desc: "1번 방문한 손님", action: "7일 안 재방문 쿠폰" },
+  regular: { name: "단골", desc: "2번 이상 방문", action: "단골 감사 히든 혜택" },
+  risk: { name: "이탈 위험", desc: "30일 넘게 안 온 손님", action: "보고 싶어요 쿠폰" },
+};
+export function segmentOf(r, now = Date.now()) {
+  if (r.visits >= 1 && r.lastVisitAt && r.lastVisitAt < now - 30 * DAY) return "risk";
+  if (!r.visits) return r.firstAt < now - 30 * DAY ? "risk" : "waiting";
+  return r.visits >= 2 ? "regular" : "new";
+}
+
 export async function storeCustomers(slug) {
   const s = await db();
   const relKeys = await s.list(`scu/${slug}/`);
   const rels = (await Promise.all(relKeys.map((k) => s.get(k)))).filter(Boolean);
   const out = [];
+  const now = Date.now();
   for (const r of rels) {
     const c = await getCustomer(r.customerId);
     if (!c) continue;
-    out.push({ ...r, name: c.name || "", phone: c.phone || "", marketing: !!c.marketing, grade: gradeOf(c.visits).name });
+    const seg = segmentOf(r, now);
+    out.push({
+      ...r, name: c.name || "", phone: c.phone || "", marketing: !!c.marketing, grade: gradeOf(c.visits).name,
+      segment: seg, segmentName: SEGMENTS[seg].name, action: SEGMENTS[seg].action,
+      daysSince: Math.floor((now - (r.lastVisitAt || r.firstAt)) / DAY),
+    });
   }
   return out.sort((a, b) => (b.lastVisitAt || b.firstAt) - (a.lastVisitAt || a.firstAt));
+}
+
+export async function crmSummary(slug) {
+  const list = await storeCustomers(slug);
+  const now = Date.now();
+  const monthStart = endOfKstDay(now, -kstParts(now).d);
+  const count = (seg) => list.filter((c) => c.segment === seg).length;
+  const visited = list.filter((c) => c.visits >= 1).length;
+  return {
+    total: list.length,
+    newThisMonth: list.filter((c) => c.firstAt >= monthStart).length,
+    segments: Object.fromEntries(Object.keys(SEGMENTS).map((k) => [k, count(k)])),
+    visitRate: pct(visited, list.length),
+    regularRate: pct(count("regular"), visited),
+    consent: list.filter((c) => c.marketing).length,
+  };
+}
+
+// 사장님이 고른 손님에게 쿠폰 보내기 (수신 동의 손님만, 같은 손님에게 7일에 1번)
+export async function sendCouponsTo(store, customerIds, { title, benefit, days = 14 }) {
+  if (!benefit) fail(400, "쿠폰 혜택을 입력해 주세요.");
+  const s = await db();
+  const result = { sent: 0, skipped: 0, reasons: {} };
+  const skip = (why) => { result.skipped++; result.reasons[why] = (result.reasons[why] || 0) + 1; };
+  for (const cid of customerIds.slice(0, 500)) {
+    const rel = await s.get(`scu/${store.slug}/${cid}`);
+    const c = await getCustomer(cid);
+    if (!rel || !c) { skip("우리 가게 손님 아님"); continue; }
+    if (!c.marketing || !c.phone) { skip("알림 수신 미동의"); continue; }
+    if (rel.lastManualAt && rel.lastManualAt > Date.now() - 7 * DAY) { skip("7일 안에 이미 보냄"); continue; }
+    const coupon = await issueCoupon({
+      store, customer: c, kind: "secret", title: title || "사장님이 보낸 특별 쿠폰", benefit,
+      expiresAt: endOfKstDay(Date.now(), Math.max(1, Math.min(60, Number(days) || 14)) - 1),
+    });
+    await touchRelation(store.slug, cid, () => ({ lastManualAt: Date.now() }));
+    const log = await sendMessage({
+      to: c.phone, type: "MANUAL", storeSlug: store.slug,
+      text: `(광고)[${store.name}] ${c.name ? c.name + "님, " : ""}사장님이 특별 쿠폰을 보냈어요!\n🎁 ${benefit}\n${fmtDate(coupon.expiresAt)}까지\n▶ ${couponLink(coupon)}\n\n무료수신거부: ${BASE_URL()}/me`,
+      vars: { "#{가게명}": store.name, "#{혜택}": benefit, "#{쿠폰링크}": couponLink(coupon), "#{만료일}": fmtDate(coupon.expiresAt) },
+    });
+    log.ok ? result.sent++ : skip("발송 실패");
+  }
+  return result;
 }
 
 export async function storeMessages(slug, limit = 100) {

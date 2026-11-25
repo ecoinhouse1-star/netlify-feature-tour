@@ -9,9 +9,10 @@ import { sendMessage, messagingMode } from "./messaging.mjs";
 import {
   getStore, saveStore, listStores, publicStore, eventStatus, getCustomer, saveCustomer, findOrCreateCustomer,
   getCoupon, customerCoupons, storeCoupons, issueEventCoupon, redeemCoupon, claimHidden, gradeOf, GRADES,
-  GOLDEN_TYPES, processQueue, storeStats, storeCustomers, storeMessages, storeQueue, BASE_URL,
+  GOLDEN_TYPES, processQueue, storeStats, storeCustomers, crmSummary, sendCouponsTo, SEGMENTS, storeMessages, storeQueue, BASE_URL,
 } from "./logic.mjs";
 import { seedIfEmpty } from "./seed.mjs";
+import { lookupPlace, defaultOffers } from "./place.mjs";
 
 const DAY = 86400000;
 const C_COOKIE = "ct_c";
@@ -324,24 +325,54 @@ on("PATCH", "/api/me", async (req) => {
 
 // ---- 사장님 ----
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
+// ---- 네이버 플레이스 링크 → 가게 정보 ----
+async function rateLimit(req, key, max, windowMs) {
+  const ip = req.headers.get("x-nf-client-connection-ip") || req.headers.get("x-forwarded-for")?.split(",")[0] || "local";
+  const s = await db();
+  const k = `rl/${key}/${ip}`;
+  const r = (await s.get(k)) || { n: 0, t: Date.now() };
+  if (Date.now() - r.t > windowMs) Object.assign(r, { n: 0, t: Date.now() });
+  r.n += 1;
+  await s.set(k, r);
+  if (r.n > max) fail(429, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.");
+}
+on("POST", "/api/place/lookup", async (req) => {
+  await rateLimit(req, "place", 20, 60000);
+  const b = await body(req);
+  const info = await lookupPlace(b.input || "", { name: b.name, address: b.address });
+  return json({ place: info, offers: defaultOffers(info.category) });
+});
+
 on("POST", "/api/owner/register", async (req) => {
   const b = await body(req);
   if (process.env.JOIN_CODE && b.joinCode !== process.env.JOIN_CODE) fail(403, "가입 코드가 맞지 않아요. 담당 영업사원에게 문의해 주세요.");
-  const slug = String(b.slug || "").toLowerCase().trim();
+  let slug = String(b.slug || "").toLowerCase().trim();
   if (!SLUG_RE.test(slug)) fail(400, "가게 주소(영문 소문자·숫자·-, 3~30자)를 확인해 주세요.");
-  if (await getStore(slug)) fail(409, "이미 사용 중인 가게 주소예요.");
+  if (await getStore(slug)) {
+    // 이름이 겹치면 자동으로 뒤에 숫자를 붙임
+    let alt = null;
+    for (let i = 2; i < 30 && !alt; i++) if (!(await getStore(`${slug.slice(0, 26)}-${i}`))) alt = `${slug.slice(0, 26)}-${i}`;
+    if (!alt) fail(409, "이미 사용 중인 가게 주소예요.");
+    slug = alt;
+  }
   if (!b.name || String(b.name).length < 2) fail(400, "가게 이름을 입력해 주세요.");
   if (!b.password || String(b.password).length < 6) fail(400, "비밀번호는 6자 이상으로 해 주세요.");
   const now = Date.now();
+  const category = b.category || "food";
+  const o = defaultOffers(category);
+  const lat = Number(b.lat), lng = Number(b.lng);
+  const sido = b.sido || "경기";
   const store = {
-    slug, name: String(b.name).slice(0, 40), category: b.category || "food", sub: b.sub || "",
-    sido: b.sido || "경기", sigungu: b.sigungu || "", region: [b.sido || "경기", b.sigungu].filter(Boolean).join(" "),
-    address: b.address || "", phone: b.phone || "", lat: null, lng: null, photos: [], tags: ["예약불필요"],
-    intro: "", menu: [], headline: "", headlineSub: "", note: "", reservation: "예약 불필요",
+    slug, name: String(b.name).slice(0, 40), category, sub: b.sub || "",
+    sido, sigungu: b.sigungu || "", region: [sido, b.sigungu].filter(Boolean).join(" "),
+    address: b.address || "", phone: b.phone || "", lat: isFinite(lat) && lat ? lat : null, lng: isFinite(lng) && lng ? lng : null,
+    photos: [], tags: ["예약불필요", "골든타임"], intro: "", menu: [],
+    headline: o.event.replace(/^첫 방문 감사:\s*/, ""), headlineSub: "첫 방문 쿠폰", note: "", reservation: "예약 불필요",
     ownerPwHash: hashPassword(String(b.password)), staffPin: String(Math.floor(1000 + Math.random() * 9000)),
-    event: { id: id(6), title: "오픈 기념 이벤트", benefit: "", startAt: now, endAt: endOfKstDay(now, 13), couponDays: 14 },
-    golden: { enabled: true, type: "companion", benefit: "" },
-    crossOffer: "", churnOffer: "", hidden: {}, keywords: [], partners: [], naverPlaceUrl: "", reviewReward: "사이드 메뉴 증정",
+    event: { id: id(6), title: "첫 방문 감사 쿠폰", benefit: o.event, startAt: now, endAt: endOfKstDay(now, 29), couponDays: 14 },
+    golden: { enabled: true, type: o.golden_type, benefit: o.golden },
+    crossOffer: o.cross, churnOffer: o.churn, hidden: {}, keywords: [b.sigungu && `${b.sigungu.replace(/시$|군$/, "")} 맛집`].filter(Boolean), partners: [],
+    placeId: b.placeId || null, placeUrl: b.placeUrl || "", naverPlaceUrl: b.reviewUrl || b.placeUrl || "", reviewReward: "사이드 메뉴 증정",
     createdAt: now,
   };
   await saveStore(store);
@@ -362,7 +393,7 @@ on("GET", "/api/owner/me", async (req) => {
 });
 
 const EDITABLE = ["name", "category", "sub", "sido", "sigungu", "region", "address", "phone", "lat", "lng", "intro", "menu", "headline", "headlineSub", "note",
-  "tags", "reservation", "crossOffer", "churnOffer", "hidden", "keywords", "partners", "naverPlaceUrl", "reviewReward", "photos", "notices"];
+  "tags", "reservation", "placeId", "placeUrl", "crossOffer", "churnOffer", "hidden", "keywords", "partners", "naverPlaceUrl", "reviewReward", "photos", "notices"];
 on("PUT", "/api/owner/store", async (req) => {
   const s = await needOwner(req);
   const b = await body(req);
@@ -420,6 +451,17 @@ on("GET", "/api/owner/customers", async (req) => {
   const s = await needOwner(req);
   const list = await storeCustomers(s.slug);
   return json({ customers: list.map((c) => ({ ...c, phone: maskPhone(c.phone) })) });
+});
+on("GET", "/api/owner/crm", async (req) => {
+  const s = await needOwner(req);
+  const list = await storeCustomers(s.slug);
+  return json({ summary: await crmSummary(s.slug), segments: SEGMENTS, customers: list.map((c) => ({ ...c, phone: maskPhone(c.phone) })) });
+});
+on("POST", "/api/owner/send-coupons", async (req) => {
+  const s = await needOwner(req);
+  const b = await body(req);
+  if (!Array.isArray(b.customerIds) || !b.customerIds.length) fail(400, "쿠폰을 보낼 손님을 골라주세요.");
+  return json(await sendCouponsTo(s, b.customerIds, b));
 });
 on("GET", "/api/owner/customers.csv", async (req) => {
   const s = await needOwner(req);

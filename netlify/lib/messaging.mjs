@@ -13,6 +13,7 @@ export const MSG_TYPES = {
   GOLDEN_REMIND: "골든타임 만료 전 리마인드",
   CHURN: "30일 미방문 안부",
   CROSS: "이웃가게 크로스 쿠폰",
+  MANUAL: "사장님 직접 발송 쿠폰",
   OTP: "인증번호",
 };
 

@@ -233,3 +233,39 @@ export const KIND = {
   hidden: { name: "등급 히든 쿠폰", emoji: "👑" },
   secret: { name: "시크릿 쿠폰", emoji: "🤫" },
 };
+
+// ---- 내 위치 (이 창에서 10분만 기억) ----
+const LOC_KEY = "ct_loc";
+export async function getLoc(ask) {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(LOC_KEY) || "null");
+    if (c && Date.now() - c.t < 10 * 60000) return c;
+  } catch {}
+  if (!navigator.geolocation) {
+    if (ask) throw new Error("위치 기능을 쓸 수 없는 기기예요");
+    return null;
+  }
+  if (!ask) {
+    // 묻지 않고: 이미 허락한 경우에만 사용
+    try {
+      const st = await navigator.permissions?.query({ name: "geolocation" });
+      if (!st || st.state !== "granted") return null;
+    } catch { return null; }
+  }
+  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
+    (p) => {
+      const l = { lat: p.coords.latitude, lng: p.coords.longitude, t: Date.now() };
+      try { sessionStorage.setItem(LOC_KEY, JSON.stringify(l)); } catch {}
+      res(l);
+    },
+    () => (ask ? rej(new Error("위치 권한을 허용해 주세요 (설정 → 사이트 권한 → 위치)")) : res(null)),
+    { timeout: 8000, maximumAge: 300000 },
+  ));
+}
+export function distKm(a, b) {
+  if (!a || !b || a.lat == null || b.lat == null) return null;
+  const R = 6371, r = (x) => (x * Math.PI) / 180;
+  const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+export const fmtKm = (d) => (d == null ? "" : d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`);

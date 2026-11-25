@@ -24,12 +24,16 @@
     <div class="chips" id="chips"></div>
     <button class="filter-btn" id="btn-filter" aria-label="필터"></button>
   </div>
+  <div class="nearbar" id="nearbar" style="display:none">
+    <span id="nearcount"></span>
+    <span class="r"><button class="chip sm on" data-r="3">3km</button><button class="chip sm" data-r="5">5km</button><button class="chip sm" data-r="10">10km</button><button class="x" id="nearoff" aria-label="내 주변 끄기">✕</button></span>
+  </div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" style="display:none"><div class="e">🔍</div>조건에 맞는 가게가 없어요</div>
 </div>
 <button class="fab" id="fab"></button>
 <script type="module">
-import { $, api, config, cardHTML, bindLikes, tabbar, ICON, toast } from "/js/common.js";
+import { $, $$, api, config, cardHTML, bindLikes, tabbar, ICON, toast, getLoc } from "/js/common.js";
 import { myRegions, regionLabel, matchRegion } from "/js/regions.js";
 
 tabbar("home");
@@ -39,7 +43,7 @@ $("#fab").innerHTML = `${ICON.pin}<span>내 주변</span>`;
 
 const params = new URLSearchParams(location.search);
 if (params.get("search")) setTimeout(() => $("#btn-search").click(), 0);
-const state = { cat: params.get("cat") || "", sub: params.get("sub") || "", regions: myRegions(), chip: "", sort: "", q: "", here: null };
+const state = { cat: params.get("cat") || "", sub: params.get("sub") || "", regions: myRegions(), chip: "", sort: "", q: "", loc: null, near: false, radius: 3 };
 let stores = [];
 
 const cfg = await config();
@@ -84,7 +88,9 @@ function render() {
   let list = stores.slice();
   if (state.cat) list = list.filter((s) => s.category === state.cat);
   if (state.sub) list = list.filter((s) => s.sub === state.sub);
-  list = list.filter((s) => matchRegion(s, state.regions));
+  // 내 주변 모드: 지역 필터 대신 반경으로
+  if (state.near) list = list.filter((s) => s.distance != null && s.distance <= state.radius);
+  else list = list.filter((s) => matchRegion(s, state.regions));
   if (state.chip === "golden") list = list.filter((s) => s.golden);
   if (state.chip === "nores") list = list.filter((s) => (s.tags || []).includes("예약불필요"));
   if (state.q) list = list.filter((s) => [s.name, s.region, s.headline, s.sub].join(" ").includes(state.q));
@@ -92,28 +98,43 @@ function render() {
   list.sort((a, b) => (b.eventStatus.active ? 1 : 0) - (a.eventStatus.active ? 1 : 0));
   if (state.sort === "deadline") list = list.filter((s) => s.eventStatus.active).sort((a, b) => (a.endAt || 9e15) - (b.endAt || 9e15));
   if (state.sort === "popular") list.sort((a, b) => b.popular - a.popular);
-  if (state.here) list.sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99));
+  if (state.near) list.sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99));
+  $("#nearbar").style.display = state.near ? "flex" : "none";
+  if (state.near) $("#nearcount").textContent = `📍 내 주변 ${state.radius}km 안 ${list.length}곳 · 가까운 순`;
   $("#grid").innerHTML = list.map(cardHTML).join("");
   $("#empty").style.display = list.length ? "none" : "block";
+  $("#empty").innerHTML = state.near
+    ? `<div class="e">📍</div>${state.radius}km 안에 쿠폰 가게가 아직 없어요<br><button class="btn line sm" id="wider" style="margin-top:12px">${state.radius < 10 ? "10km로 넓혀보기" : "동네 전체 보기"}</button>`
+    : `<div class="e">🔍</div>조건에 맞는 가게가 없어요`;
+  const w = $("#wider");
+  if (w) w.onclick = () => { if (state.radius < 10) { state.radius = 10; $$("[data-r]").forEach((x) => x.classList.toggle("on", x.dataset.r === "10")); render(); } else nearOff(); };
+
 }
 
 async function load() {
-  const q = state.here ? `?lat=${state.here.lat}&lng=${state.here.lng}` : "";
+  const q = state.loc ? `?lat=${state.loc.lat}&lng=${state.loc.lng}` : "";
   stores = (await api("/api/stores" + q)).stores;
   renderChips();
   render();
 }
 
-$("#fab").onclick = () => {
-  if (state.here) { state.here = null; $("#fab").classList.remove("on"); load(); return; }
-  if (!navigator.geolocation) return toast("위치 기능을 쓸 수 없는 기기예요");
+function nearOff() { state.near = false; $("#fab").classList.toggle("on", false); render(); }
+$("#nearoff").onclick = nearOff;
+$$("[data-r]").forEach((b) => (b.onclick = () => { state.radius = +b.dataset.r; $$("[data-r]").forEach((x) => x.classList.toggle("on", x === b)); render(); }));
+$("#fab").onclick = async () => {
+  if (state.near) return nearOff();
   toast("내 위치를 찾는 중…");
-  navigator.geolocation.getCurrentPosition(
-    (p) => { state.here = { lat: p.coords.latitude, lng: p.coords.longitude }; $("#fab").classList.add("on"); load().then(() => toast("가까운 순으로 정렬했어요")); },
-    () => toast("위치 권한을 허용해 주세요"),
-    { timeout: 8000 },
-  );
+  try {
+    state.loc = await getLoc(true);
+    state.near = true;
+    $("#fab").classList.add("on");
+    await load();
+    scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) { toast(e.message); }
 };
+
+// 이미 위치 권한을 허락한 손님은 처음부터 거리 표시
+getLoc(false).then((l) => { if (l) { state.loc = l; load(); } }).catch(() => {});
 
 bindLikes();
 load().catch((e) => toast(e.message));
