@@ -137,14 +137,110 @@ const DEMO = [
   },
 ];
 
+export const DEMO_PHOTOS = {
+ "hanuri": {
+  "hero": "/img/demo/hanuri-hero.jpg",
+  "menu": [
+   "/img/demo/hanuri-m0.jpg",
+   "/img/demo/hanuri-m1.jpg",
+   "/img/demo/hanuri-m2.jpg",
+   null
+  ]
+ },
+ "danbi": {
+  "hero": "/img/demo/danbi-hero.jpg",
+  "menu": [
+   "/img/demo/danbi-m0.jpg",
+   "/img/demo/danbi-m1.jpg",
+   "/img/demo/danbi-m2.jpg"
+  ]
+ },
+ "sarang-hair": {
+  "hero": null,
+  "menu": [
+   "/img/demo/sarang-m0.jpg",
+   null,
+   "/img/demo/sarang-m2.jpg"
+  ]
+ },
+ "bunsik": {
+  "hero": "/img/demo/bunsik-hero.jpg",
+  "menu": [
+   "/img/demo/bunsik-m0.jpg",
+   "/img/demo/bunsik-m1.jpg",
+   "/img/demo/bunsik-m2.jpg"
+  ]
+ },
+ "fitzone": {
+  "hero": null,
+  "menu": []
+ },
+ "meongmeong": {
+  "hero": "/img/demo/meong-hero.jpg",
+  "menu": [
+   null,
+   "/img/demo/meong-hero.jpg"
+  ]
+ },
+ "bbang": {
+  "hero": "/img/demo/bbang-hero.jpg",
+  "menu": [
+   null,
+   "/img/demo/bbang-m1.jpg",
+   null
+  ]
+ },
+ "menya": {
+  "hero": "/img/demo/menya-hero.jpg",
+  "menu": [
+   "/img/demo/menya-m0.jpg",
+   "/img/demo/menya-m1.jpg",
+   null
+  ]
+ },
+ "haru-nail": {
+  "hero": null,
+  "menu": [
+   null,
+   null
+  ]
+ },
+ "gukbap": {
+  "hero": null,
+  "menu": [
+   null,
+   null
+  ]
+ }
+};
+
+const SEED_VERSION = JSON.stringify(DEMO_PHOTOS).length; // 사진 목록이 바뀌면 체험 가게 사진도 다시 적용
+// 실사 사진 적용 (사진이 있으면 가게 대표 사진 + 메뉴 사진)
+function applyPhotos(store) {
+  const ph = DEMO_PHOTOS[store.slug];
+  if (!ph) return store;
+  const svg = store.photos?.[0]?.endsWith(".svg") ? store.photos[0] : null;
+  store.photos = [ph.hero || ph.menu.find(Boolean) || svg].filter(Boolean);
+  store.menu = (store.menu || []).map((m, i) => ({ ...m, photo: m.photo || ph.menu[i] || "" }));
+  store.seedVersion = SEED_VERSION;
+  return store;
+}
+
 export async function seedIfEmpty() {
   if (process.env.DEMO_SEED === "off") return false;
   const existing = await listStores();
-  if (existing.length) return false;
+  if (existing.length) {
+    for (const st of existing) {
+      if (!st.demo || st.seedVersion === SEED_VERSION) continue;
+      const custom = (st.photos || []).some((p) => !p.startsWith("/img/demo/"));
+      if (!custom) await saveStore(applyPhotos(st));
+    }
+    return false;
+  }
   const now = Date.now();
   for (const d of DEMO) {
     const { days, ...event } = d.event;
-    await saveStore({
+    await saveStore(applyPhotos({
       ...d,
       demo: true,
       ownerPwHash: hashPassword("demo1234"),
@@ -155,7 +251,7 @@ export async function seedIfEmpty() {
       event: { ...event, id: "e1", startAt: now - DAY, endAt: endOfKstDay(now, days - 1) },
       partners: [],
       createdAt: now,
-    });
+    }));
   }
   return true;
 }

@@ -10,7 +10,8 @@ import {
   getStore, saveStore, listStores, publicStore, eventStatus, getCustomer, saveCustomer, findOrCreateCustomer,
   getCoupon, customerCoupons, storeCoupons, issueEventCoupon, redeemCoupon, claimHidden, gradeOf, GRADES,
   GOLDEN_TYPES, processQueue, storeStats, storeCustomers, crmSummary, sendCouponsTo, SEGMENTS,
-  getRules, checkinCustomer, customerDetail, updateCustomerNote, monthlyReport, storeMessages, storeQueue, BASE_URL,
+  getRules, checkinCustomer, customerDetail, updateCustomerNote, monthlyReport,
+  trackView, channelStats, storeChannels, normChannel, storeMessages, storeQueue, BASE_URL,
 } from "./logic.mjs";
 import { seedIfEmpty } from "./seed.mjs";
 import { lookupPlace, defaultOffers } from "./place.mjs";
@@ -67,7 +68,7 @@ function cardOf(store, here, issuedCount = 0) {
   const st = eventStatus(store);
   return {
     slug: store.slug, name: store.name, category: store.category, sub: store.sub, region: store.region, sido: store.sido, sigungu: store.sigungu,
-    photo: store.photos?.[0] || null, headline: store.headline || store.event?.benefit || "", headlineSub: store.headlineSub || "",
+    photo: store.photos?.[0] || store.menu?.find((m) => m.photo)?.photo || null, headline: store.headline || store.event?.benefit || "", headlineSub: store.headlineSub || "",
     tags: store.tags || [], demo: !!store.demo, eventStatus: st, endAt: store.event?.endAt || null,
     golden: !!store.golden?.enabled, distance: distanceKm(here, store), popular: issuedCount,
   };
@@ -129,15 +130,21 @@ on("GET", "/api/stores/:slug", async (req, url, { slug }) => {
     .slice(0, 4)
     .map(({ x }) => cardOf(x, store));
   const hiddenInfo = { regular: !!store.hidden?.regular, vip: !!store.hidden?.vip };
+  let eventRemaining = null;
+  if (store.event?.limit) {
+    const n = (await storeCoupons(slug)).filter((c) => c.kind === "event" && c.eventId === store.event.id).length;
+    eventRemaining = Math.max(0, store.event.limit - n);
+  }
   const { hidden, ...pub } = publicStore(store);
-  return json({ store: { ...pub, hiddenInfo }, mine, similar: others, loggedIn: !!me });
+  return json({ store: { ...pub, hiddenInfo, eventRemaining }, mine, similar: others, loggedIn: !!me });
 });
 
 on("POST", "/api/stores/:slug/coupon", async (req, url, { slug }) => {
   const c = await needCustomer(req);
   const store = await getStore(slug);
   if (!store) fail(404, "가게를 찾을 수 없어요.");
-  return json(await issueEventCoupon(store, c));
+  const b = await body(req);
+  return json(await issueEventCoupon(store, c, normChannel(b.ch)));
 });
 
 on("POST", "/api/stores/:slug/hidden", async (req, url, { slug }) => {
@@ -507,12 +514,35 @@ on("GET", "/api/owner/report", async (req, url) => {
   const ym = /^\d{4}-\d{2}$/.test(url.searchParams.get("month") || "") ? url.searchParams.get("month") : now.toISOString().slice(0, 7);
   return json({ report: await monthlyReport(s.slug, ym), store: { name: s.name, region: s.region } });
 });
+// ---- 광고 랜딩 유입 경로 ----
+on("POST", "/api/track", async (req) => {
+  await rateLimit(req, "track", 60, 60000);
+  const b = await body(req);
+  const store = await getStore(String(b.slug || ""));
+  if (store) await trackView(store.slug, b.ch);
+  return json({ ok: true });
+});
+on("GET", "/api/owner/channels", async (req, url) => {
+  const s = await needOwner(req);
+  const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
+  return json({ channels: storeChannels(s), stats: await channelStats(s, days), base: `${BASE_URL()}/e/${s.slug}` });
+});
+on("POST", "/api/owner/channels", async (req) => {
+  const s = await needOwner(req);
+  const b = await body(req);
+  const key = normChannel(b.key);
+  if (!key) fail(400, "경로 이름은 영문·숫자·한글 20자 이내로 해 주세요.");
+  if (storeChannels(s).some((c) => c.key === key)) fail(409, "이미 있는 경로예요.");
+  s.channels = [...(s.channels || []), { key, name: String(b.name || key).slice(0, 20) }].slice(0, 20);
+  await saveStore(s);
+  return json({ channels: storeChannels(s) });
+});
 on("GET", "/api/owner/customers.csv", async (req) => {
   const s = await needOwner(req);
   const list = (await storeCustomers(s.slug)).filter((c) => c.marketing);
   const fmt = (ms) => (ms ? new Date(ms + 9 * 3600000).toISOString().slice(0, 10) : "");
-  const rows = [["이름", "휴대폰", "등급", "방문수", "첫방문", "최근방문"]].concat(
-    list.map((c) => [c.name, c.phone, c.grade, c.visits, fmt(c.firstAt), fmt(c.lastVisitAt)]),
+  const rows = [["이름", "휴대폰", "등급", "분류", "방문수", "유입경로", "첫방문", "최근방문"]].concat(
+    list.map((c) => [c.name, c.phone, c.grade, c.segmentName, c.visits, c.source || "", fmt(c.firstAt), fmt(c.lastVisitAt)]),
   );
   const csv = "﻿" + rows.map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
   return new Response(csv, {

@@ -8,6 +8,7 @@
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
 <link rel="stylesheet" href="/css/app.css">
+<script src="/js/qrcode.js"></script>
 </head>
 <body>
 <div class="app no-tab" style="padding-bottom:40px">
@@ -124,7 +125,7 @@ function loginView(mode = "login") {
 }
 
 // ---------- 메인 ----------
-const TABS = [["dash", "📊 현황"], ["checkin", "➕ 매장 적립"], ["use", "✅ 쿠폰 사용처리"], ["cust", "👥 신규·단골 관리"], ["rules", "⚙️ 자동 발송"], ["report", "📈 월간 리포트"], ["coupon", "🎟️ 쿠폰 설정"], ["info", "🏪 가게 정보"], ["msg", "💬 알림톡 기록"], ["promo", "📣 홍보물"]];
+const TABS = [["dash", "📊 현황"], ["checkin", "➕ 매장 적립"], ["use", "✅ 쿠폰 사용처리"], ["cust", "👥 신규·단골 관리"], ["rules", "⚙️ 자동 발송"], ["report", "📈 월간 리포트"], ["ads", "🔗 광고 링크"], ["coupon", "🎟️ 쿠폰 설정"], ["info", "🏪 가게 정보"], ["msg", "💬 알림톡 기록"], ["promo", "📣 홍보물"]];
 function render() {
   const s = me.store;
   $("#ttl").textContent = s.name;
@@ -133,7 +134,7 @@ function render() {
     <div class="owner-tabs">${TABS.map(([k, l]) => `<button class="${k === tab ? "on" : ""}" data-t="${k}">${l}</button>`).join("")}</div>
     <div id="pane"></div>`;
   $$("[data-t]").forEach((b) => (b.onclick = () => { tab = b.dataset.t; history.replaceState(null, "", "?tab=" + tab); render(); }));
-  ({ dash, checkin, use, coupon, info, cust, rules, report, msg, promo })[tab]();
+  ({ dash, checkin, use, coupon, info, cust, rules, report, ads, msg, promo })[tab]();
 }
 
 async function dash() {
@@ -154,7 +155,7 @@ async function dash() {
       <div class="legend"><span><i style="background:#f6b4b8"></i>발급</span><span><i style="background:var(--red)"></i>사용(방문)</span></div>
       <h4>손님용 링크</h4>
       <div class="inline"><input class="input" readonly value="${esc(me.link)}"><button class="btn" id="cp">복사</button></div>
-      <div class="hint">인스타 프로필·릴스·당근 광고에 이 링크를 넣으세요.</div>
+      <div class="hint">동네 포털 화면 링크예요. 광고에는 <b>🔗 광고 링크</b> 탭의 경로별 링크를 쓰면 어느 광고가 효과 있는지 보여요.</div>
       <div class="notice" style="margin:14px 0 0">🔑 직원 확인 번호: <b style="font-size:18px">${esc(me.store.staffPin)}</b> — 손님 쿠폰 화면에서 직원이 입력해요. (가게 정보 탭에서 변경)</div>
     </div>`;
   $("#cp").onclick = () => copyText(me.link);
@@ -248,7 +249,7 @@ function info() {
     <div class="field"><label>예약</label><select class="input" id="res"><option ${s.reservation === "예약 불필요" ? "selected" : ""}>예약 불필요</option><option ${s.reservation === "예약 필수" ? "selected" : ""}>예약 필수</option><option ${s.reservation === "예약 권장" ? "selected" : ""}>예약 권장</option></select></div>
     <div class="field"><label>태그 (쉼표로 구분)</label><input class="input" id="tags" value="${esc((s.tags || []).join(", "))}" placeholder="예약불필요, 골든타임, 주차가능"></div>
     <div class="field"><label>매장 소개</label><textarea class="input" id="intro" rows="5">${esc(s.intro)}</textarea></div>
-    <h4>대표 메뉴</h4><div id="menu">${menu.map((m) => `<div class="menu-edit"><input class="input" placeholder="메뉴" value="${esc(m.name)}"><input class="input" placeholder="가격" value="${esc(m.price)}"><button class="btn line sm" data-del>✕</button></div>`).join("")}</div>
+    <h4>대표 메뉴 · 상품 (📷 눌러 실사 사진 올리기)</h4><div class="hint">메뉴 사진은 가게 화면에 사진 카드로 보이고, 가게 사진이 없으면 대표 사진으로 쓰여요.</div><div id="menu">${menu.map((m) => `<div class="menu-edit" data-photo="${esc(m.photo || "")}"><button class="mphoto" data-mphoto title="메뉴 사진">${m.photo ? `<img src="${esc(m.photo)}">` : "📷"}</button><input class="input" placeholder="메뉴" value="${esc(m.name)}"><input class="input" placeholder="가격" value="${esc(m.price)}"><button class="btn line sm" data-del>✕</button></div>`).join("")}</div>
     <button class="btn line sm" id="addm">+ 메뉴 추가</button>
     <h4>이용 전 확인사항 (한 줄에 하나)</h4><textarea class="input" id="notices" rows="4">${esc((s.notices || []).join("\n"))}</textarea>
     <h4>보안</h4>
@@ -290,12 +291,32 @@ function info() {
   };
 
   $("#gps").onclick = () => navigator.geolocation?.getCurrentPosition((p) => { pos = { lat: p.coords.latitude, lng: p.coords.longitude }; $("#pos").textContent = `설정됨 (${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}) — 저장을 눌러주세요`; }, () => toast("위치 권한을 허용해 주세요"));
-  $("#addm").onclick = () => { $("#menu").insertAdjacentHTML("beforeend", `<div class="menu-edit"><input class="input" placeholder="메뉴"><input class="input" placeholder="가격"><button class="btn line sm" data-del>✕</button></div>`); };
-  $("#menu").onclick = (e) => { if (e.target.closest("[data-del]")) e.target.closest(".menu-edit").remove(); };
+  $("#addm").onclick = () => { $("#menu").insertAdjacentHTML("beforeend", `<div class="menu-edit" data-photo=""><button class="mphoto" data-mphoto title="메뉴 사진">📷</button><input class="input" placeholder="메뉴"><input class="input" placeholder="가격"><button class="btn line sm" data-del>✕</button></div>`); };
+  let photoRow = null;
+  const mfile = document.createElement("input");
+  mfile.type = "file"; mfile.accept = "image/*"; mfile.hidden = true;
+  document.body.appendChild(mfile);
+  mfile.onchange = async () => {
+    const f = mfile.files[0];
+    if (!f || !photoRow) return;
+    const btn = photoRow.querySelector("[data-mphoto]");
+    btn.textContent = "…";
+    try {
+      const r = await api("/api/owner/photo", { body: { dataUrl: await shrink(f, 900) } });
+      photoRow.dataset.photo = r.url;
+      btn.innerHTML = `<img src="${r.url}">`;
+      toast("메뉴 사진을 올렸어요. 저장을 눌러주세요");
+    } catch (err) { btn.textContent = "📷"; toast(err.message); }
+    mfile.value = "";
+  };
+  $("#menu").onclick = (e) => {
+    if (e.target.closest("[data-del]")) e.target.closest(".menu-edit").remove();
+    if (e.target.closest("[data-mphoto]")) { photoRow = e.target.closest(".menu-edit"); mfile.click(); }
+  };
   $("#save").onclick = () => save({
     ...placeExtra, photos, name: v("name"), sido: "경기", sigungu: v("sgg"), category: v("cat"), sub: v("sub"), phone: v("phone"), address: v("addr"),
     lat: pos?.lat ?? null, lng: pos?.lng ?? null, reservation: v("res"), tags: v("tags").split(",").map((x) => x.trim()).filter(Boolean),
-    intro: $("#intro").value, menu: $$("#menu .menu-edit").map((r) => ({ name: r.children[0].value.trim(), price: r.children[1].value.trim() })).filter((m) => m.name),
+    intro: $("#intro").value, menu: $$("#menu .menu-edit").map((r) => ({ name: r.children[1].value.trim(), price: r.children[2].value.trim(), photo: r.dataset.photo || "" })).filter((m) => m.name),
     notices: $("#notices").value.split("\n").map((x) => x.trim()).filter(Boolean), staffPin: v("pin"), newPassword: $("#npw").value || undefined,
   });
 }
@@ -346,7 +367,7 @@ async function cust() {
       ${list.length ? `<div id="clist">${list.map((c) => `
         <label class="crm-row">
           <input type="checkbox" value="${c.customerId}" ${c.marketing ? "" : "disabled"}>
-          <div class="t"><b>${esc(c.name || "이름 없음")}</b> <span class="pill ${segColor[c.segment]}">${c.segmentName}</span> <small class="hint">${esc(c.grade)}</small>
+          <div class="t"><b>${esc(c.name || "이름 없음")}</b> <span class="pill ${segColor[c.segment]}">${c.segmentName}</span> <small class="hint">${esc(c.grade)}</small>${c.source ? ` <span class="pill">🔗 ${esc(c.source)}</span>` : ""}
             <div class="hint">${esc(c.phone)} · 방문 ${c.visits}회 · ${c.lastVisitAt ? `마지막 방문 ${c.daysSince}일 전` : `쿠폰 받은 지 ${c.daysSince}일`}${c.marketing ? "" : " · <span style='color:var(--red)'>알림 수신 거부</span>"}</div>
             <div class="hint" style="color:#2a4fa0">→ ${c.action}</div></div>
           <button class="btn sm line" data-detail="${c.customerId}">상세</button>
@@ -459,7 +480,7 @@ async function detailSheet(cid) {
   sh.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div><h3>${esc(c.name || "이름 없음")} <span class="pill">${esc(c.segmentName)}</span></h3>
-        <div class="hint">${c.grade.emoji} ${esc(c.grade.name)} · ${c.marketing ? "알림 수신 동의" : "<span style='color:var(--red)'>알림 수신 거부</span>"}</div></div>
+        <div class="hint">${c.grade.emoji} ${esc(c.grade.name)}${c.source ? ` · 유입: ${esc(c.source)}` : ""} · ${c.marketing ? "알림 수신 동의" : "<span style='color:var(--red)'>알림 수신 거부</span>"}</div></div>
       ${c.phone ? `<a class="btn sm line" href="tel:${esc(c.phone)}" style="display:grid;place-items:center">📞 전화</a>` : ""}
     </div>
     <div class="kpis" style="padding:14px 0 0">
@@ -571,6 +592,60 @@ function summaryLine(c, p, R) {
   if (R.segments.risk) parts.push(`이탈 위험 손님 ${R.segments.risk}명에게 '보고 싶어요 쿠폰'을 보내보세요.`);
   if (!parts.length) parts.push("아직 데이터가 적어요. 매장 QR과 손님용 링크를 홍보해 보세요!");
   return parts.join(" ");
+}
+
+// ---------- 광고 링크 (경로별 랜딩페이지 링크 · QR · 성과) ----------
+let adsDays = 30;
+async function ads() {
+  const { channels, stats, base } = await api(`/api/owner/channels?days=${adsDays}`);
+  const total = stats.reduce((a, r) => ({ views: a.views + r.views, signups: a.signups + r.signups, visits: a.visits + r.visits }), { views: 0, signups: 0, visits: 0 });
+  const best = stats.filter((r) => r.signups).sort((a, b) => b.signups - a.signups)[0];
+  $("#pane").innerHTML = `<div class="panel">
+    <h4>📣 광고 전용 이벤트 페이지</h4>
+    <div class="hint">광고·SNS에는 아래 <b>경로별 링크</b>를 넣으세요. 손님이 어느 광고를 보고 왔는지 자동으로 구분돼서 고객관리에 기록돼요.</div>
+    <a class="btn line block" style="display:grid;place-items:center;margin-top:10px" href="${esc(base)}" target="_blank">랜딩페이지 미리보기</a>
+    <div class="chips" style="margin:16px 0 4px">${[7, 30, 90].map((n) => `<button class="chip ${adsDays === n ? "on" : ""}" data-days="${n}">최근 ${n}일</button>`).join("")}</div>
+    <div class="kpis" style="padding:10px 0">
+      <div class="kpi"><small>페이지 방문</small><b>${total.views}</b></div>
+      <div class="kpi"><small>쿠폰 받은 손님 (가입)</small><b>${total.signups}명</b><em>${(() => { const t = stats.filter((r) => r.key !== "direct"); const v = t.reduce((a, r) => a + r.views, 0), g = t.reduce((a, r) => a + r.signups, 0); return v ? `광고 방문자의 ${Math.min(100, Math.round((g / v) * 100))}%` : "광고 링크로 들어온 손님 기준"; })()}</em></div>
+      <div class="kpi"><small>실제 매장 방문</small><b>${total.visits}명</b><em>가입자의 ${total.signups ? Math.round((total.visits / total.signups) * 100) : 0}%</em></div>
+      <div class="kpi"><small>가장 잘 되는 광고</small><b style="font-size:20px">${best ? `${best.emoji} ${esc(best.name)}` : "-"}</b></div>
+    </div>
+    <table class="tbl"><tr><th>경로</th><th>방문</th><th>가입</th><th>매장 방문</th></tr>
+      ${stats.map((r) => `<tr><td>${r.emoji} ${esc(r.name)}</td><td>${r.views}</td><td><b>${r.signups}</b> <small class="hint">${r.signupRate}%</small></td><td>${r.visits} <small class="hint">${r.visitRate}%</small></td></tr>`).join("")}
+    </table>
+    <h4>경로별 링크 · QR</h4>
+    <div id="links">${channels.map((c) => `
+      <div class="link-row">
+        <div class="t"><b>${c.emoji} ${esc(c.name)}</b><div class="hint" style="word-break:break-all">${esc(base)}?ch=${encodeURIComponent(c.key)}</div></div>
+        <button class="btn sm line" data-copy="${esc(base)}?ch=${encodeURIComponent(c.key)}">복사</button>
+        <button class="btn sm line" data-qr="${esc(c.key)}" data-name="${esc(c.name)}">QR</button>
+      </div>`).join("")}</div>
+    <h4>경로 추가 (예: 지역 카페, 현수막)</h4>
+    <div class="inline"><input class="input" id="chKey" placeholder="영문·한글 (예: banner)"><input class="input" id="chName" placeholder="표시 이름 (예: 현수막)"><button class="btn" id="chAdd">추가</button></div>
+    <div class="hint" style="margin-top:12px">💡 인스타·당근 광고에는 해당 링크를, 매장 테이블·전단지에는 QR을 인쇄해 붙이세요.</div></div>`;
+  $$("[data-days]").forEach((b) => (b.onclick = () => { adsDays = +b.dataset.days; ads(); }));
+  $$("[data-copy]", $("#pane")).forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  $$("[data-qr]").forEach((b) => (b.onclick = () => qrDownload(`${base}?ch=${encodeURIComponent(b.dataset.qr)}`, b.dataset.name)));
+  $("#chAdd").onclick = async () => {
+    try { await api("/api/owner/channels", { body: { key: v("chKey"), name: v("chName") } }); toast("경로를 추가했어요"); ads(); }
+    catch (e) { toast(e.message); }
+  };
+}
+function qrDownload(link, label) {
+  const q = qrcode(0, "M"); q.addData(link); q.make();
+  const n = q.getModuleCount(), size = 900, pad = 60, cell = (size - pad * 2) / n;
+  const c = document.createElement("canvas"); c.width = size; c.height = size + 150;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#111";
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) g.fillRect(pad + k * cell, pad + r * cell, Math.ceil(cell), Math.ceil(cell));
+  g.fillStyle = "#e2232e"; g.fillRect(0, size, c.width, 150);
+  g.fillStyle = "#fff"; g.textAlign = "center"; g.font = '800 54px Pretendard, "Malgun Gothic", sans-serif';
+  g.fillText(`${me.store.name} 쿠폰 받기`, size / 2, size + 70);
+  g.font = '500 34px Pretendard, "Malgun Gothic", sans-serif'; g.fillText(`QR 찍고 바로 받기 · ${label}`, size / 2, size + 120);
+  const a = document.createElement("a"); a.download = `${me.store.slug}-${label}-qr.png`; a.href = c.toDataURL("image/png");
+  document.body.appendChild(a); a.click(); a.outerHTML = "";
 }
 
 async function msg() {

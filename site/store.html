@@ -58,12 +58,17 @@ function render() {
   const { store: s, mine, similar } = data;
   document.title = `${s.name} · 우리동네 쿠폰마을`;
   $("#dtitle").textContent = s.name;
-  const photos = s.photos?.length ? s.photos : ["/img/placeholder.svg"];
+  const menuPhotos = (s.menu || []).map((m) => m.photo).filter(Boolean);
+  const photos = [...(s.photos || []), ...menuPhotos].filter((x, i, a) => a.indexOf(x) === i);
+  if (!photos.length) photos.push("/img/placeholder.svg");
   const st = s.eventStatus;
   const ev = s.event || {};
   const tags = (s.tags || []).map((t) => `<span class="tag ${t === "예약불필요" ? "blue" : t === "골든타임" ? "red" : ""}">${esc(t)}</span>`).join("");
   const golden = s.golden?.enabled && s.golden.benefit;
-  const menuRows = (s.menu || []).map((m) => `<div class="menu-item"><span>${esc(m.name)}</span><span>${esc(m.price || "")}</span></div>`).join("");
+  const CAT_EMOJI = { food: "🍽️", cafe: "☕", beauty: "✂️", fitness: "🏋️", activity: "🎟️", stay: "🛏️", pet: "🐶", life: "🛍️" };
+  const menuRows = (s.menu || []).map((m, i) => `<div class="menu-card ${i >= 4 ? "more-item" : ""}">
+      <div class="mthumb">${m.photo ? `<img src="${esc(m.photo)}" alt="${esc(m.name)}" loading="lazy">` : `<span>${CAT_EMOJI[s.category] || "🍽️"}</span>`}${i === 0 ? '<em class="best">대표</em>' : ""}</div>
+      <div class="mname">${esc(m.name)}</div><div class="mprice">${esc(m.price || "")}</div></div>`).join("");
   const mapQ = s.lat ? `https://www.openstreetmap.org/export/embed.html?bbox=${s.lng - 0.004},${s.lat - 0.0025},${s.lng + 0.004},${s.lat + 0.0025}&layer=mapnik&marker=${s.lat},${s.lng}` : "";
   const naverMap = `https://map.naver.com/p/search/${encodeURIComponent(s.address || s.name)}`;
   const grade = mine?.grade;
@@ -98,7 +103,7 @@ function render() {
 
   ${s.intro ? `<div class="section"><h3 class="h2">매장 소개</h3><div class="clamp" id="intro">${esc(s.intro)}</div><button class="more" data-more="intro">${ICON.down.replace("<svg", '<svg style="width:18px;stroke:var(--red);fill:none;stroke-width:2.4"')} 소개 더보기</button></div>` : ""}
 
-  ${menuRows ? `<div class="section"><h3 class="h2">대표 메뉴</h3><div class="clamp" id="menu" style="-webkit-line-clamp:unset;max-height:${(s.menu.length > 3 ? 3 * 44 : 999)}px">${menuRows}</div>${s.menu.length > 3 ? `<button class="more" data-more="menu">${ICON.down.replace("<svg", '<svg style="width:18px;stroke:var(--red);fill:none;stroke-width:2.4"')} 메뉴 더보기</button>` : ""}</div>` : ""}
+  ${menuRows ? `<div class="section"><h3 class="h2">${s.category === "food" || s.category === "cafe" ? "대표 메뉴" : "대표 상품·서비스"}</h3><div class="menu-grid" id="menu">${menuRows}</div>${s.menu.length > 4 ? `<button class="more" data-more="menu">${ICON.down.replace("<svg", '<svg style="width:18px;stroke:var(--red);fill:none;stroke-width:2.4"')} 메뉴 더보기</button>` : ""}</div>` : ""}
 
   <div class="section"><h3 class="h2">매장 정보</h3>
     ${s.phone ? `<div class="row-kv"><b>연락처</b><span class="v">${esc(s.phone)}</span><a class="copy-btn" href="tel:${esc(s.phone)}" aria-label="전화">${ICON.ext}</a></div>` : ""}

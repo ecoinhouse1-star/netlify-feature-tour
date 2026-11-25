@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>이벤트 쿠폰 받기 · 우리동네 쿠폰마을</title>
+<meta name="description" content="지금 쿠폰 받고 방문하세요. 우리동네 쿠폰마을">
+<meta property="og:title" content="우리동네 쿠폰마을 · 이벤트 쿠폰">
+<meta property="og:image" content="/img/logo.png">
+<link rel="icon" href="/img/logo-96.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .ev-hero { position: relative; aspect-ratio: 4 / 5; background: #222 center/cover no-repeat; color: #fff; display: flex; flex-direction: column; justify-content: flex-end; padding: 22px; }
+  .ev-hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.15) 0%, rgba(0,0,0,0) 35%, rgba(0,0,0,.78) 100%); }
+  .ev-hero > * { position: relative; }
+  .ev-top { position: absolute; top: 14px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .ev-top img { width: 46px; height: 46px; background: #fff; border-radius: 50%; }
+  .ev-badge { background: var(--red); color: #fff; font-weight: 800; font-size: 14px; padding: 6px 12px; border-radius: 999px; }
+  .ev-store { font-size: 16px; opacity: .95; display: flex; align-items: center; gap: 6px; }
+  .ev-title { font-size: 34px; font-weight: 900; line-height: 1.2; margin: 6px 0 4px; letter-spacing: -1px; word-break: keep-all; text-shadow: 0 2px 10px rgba(0,0,0,.35); }
+  .ev-sub { font-size: 18px; font-weight: 600; opacity: .95; }
+  .ev-timer { margin-top: 14px; display: inline-flex; gap: 8px; align-items: center; background: rgba(255,255,255,.16); backdrop-filter: blur(6px); padding: 8px 14px; border-radius: 12px; font-size: 15px; width: fit-content; }
+  .ev-timer b { font-variant-numeric: tabular-nums; font-size: 18px; }
+  .ticket { margin: -26px 16px 0; position: relative; z-index: 2; background: #fff; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.12); overflow: hidden; }
+  .ticket .t1 { padding: 18px 20px; border-bottom: 2px dashed #f0c9cb; position: relative; }
+  .ticket .t1::before, .ticket .t1::after { content: ""; position: absolute; bottom: -12px; width: 22px; height: 22px; border-radius: 50%; background: var(--bg); }
+  .ticket .t1::before { left: -11px; } .ticket .t1::after { right: -11px; }
+  .ticket .t1 small { color: var(--red); font-weight: 700; }
+  .ticket .t1 h2 { margin: 4px 0 0; font-size: 22px; letter-spacing: -0.5px; word-break: keep-all; }
+  .ticket .t2 { padding: 14px 20px 18px; font-size: 14px; color: #555; display: grid; gap: 6px; }
+  .left-bar { height: 10px; background: #fde7e8; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .left-bar i { display: block; height: 100%; background: var(--red); border-radius: 99px; }
+  .steps3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .steps3 div { background: var(--tile); border-radius: 14px; padding: 14px 6px; font-size: 13px; color: #444; word-break: keep-all; }
+  .steps3 b { display: block; font-size: 26px; margin-bottom: 4px; }
+  .gift { background: linear-gradient(135deg, #fff7e8, #fff1f1); border-radius: 16px; padding: 16px; }
+</style>
+</head>
+<body>
+<div class="app no-tab" id="root"><div class="empty">불러오는 중…</div></div>
+<button class="cta" id="cta" disabled>1초 만에 쿠폰 받기</button>
+<script type="module">
+import { $, $$, api, esc, toast, openLogin, fmtDate, leftText, copyText, getLoc, distKm, fmtKm } from "/js/common.js";
+
+const slug = decodeURIComponent(location.pathname.split("/")[2] || "");
+const params = new URLSearchParams(location.search);
+const ch = (params.get("ch") || params.get("utm_source") || "").slice(0, 20);
+let d;
+
+// 어느 광고에서 왔는지 기록 (같은 창에서는 한 번만)
+try {
+  const k = `ct_seen_${slug}_${ch || "direct"}`;
+  if (!sessionStorage.getItem(k)) {
+    sessionStorage.setItem(k, "1");
+    api("/api/track", { body: { slug, ch } }).catch(() => {});
+  }
+  if (ch) sessionStorage.setItem(`ct_ch_${slug}`, ch);
+} catch {}
+const channel = () => { try { return ch || sessionStorage.getItem(`ct_ch_${slug}`) || ""; } catch { return ch; } };
+
+async function load() {
+  d = await api(`/api/stores/${encodeURIComponent(slug)}`);
+  render();
+}
+
+function render() {
+  const { store: s, mine } = d;
+  const ev = s.event || {};
+  const st = s.eventStatus;
+  document.title = `${s.name} ${ev.title || "이벤트"} · 쿠폰 받기`;
+  const photo = s.photos?.[0] || s.menu?.find((m) => m.photo)?.photo || "/img/placeholder.svg";
+  const menus = (s.menu || []).slice(0, 4);
+  const CAT = { food: "🍽️", cafe: "☕", beauty: "✂️", fitness: "🏋️", activity: "🎟️", stay: "🛏️", pet: "🐶", life: "🛍️" };
+  const limit = ev.limit, left = s.eventRemaining;
+  $("#root").innerHTML = `
+    <section class="ev-hero" style="background-image:url('${esc(photo)}')">
+      <div class="ev-top"><img src="/img/logo-96.png" alt="우리동네 쿠폰마을"><span class="ev-badge">${st.active ? "🔥 진행 중" : esc(st.label)}</span></div>
+      <div class="ev-store">📍 ${esc(s.region || "")} · ${esc(s.name)}</div>
+      <div class="ev-title">${esc(s.headline || ev.benefit || "")}</div>
+      <div class="ev-sub">${esc(ev.title || "")}${s.headlineSub ? ` · ${esc(s.headlineSub)}` : ""}</div>
+      ${st.active && ev.endAt ? `<div class="ev-timer">⏳ 마감까지 <b id="cd"></b></div>` : ""}
+    </section>
+
+    <div class="ticket">
+      <div class="t1"><small>🎟️ ${esc(ev.title || "이벤트 쿠폰")}</small><h2>${esc(ev.benefit || s.headline || "")}</h2></div>
+      <div class="t2">
+        <div>✔ 받은 날부터 <b>${esc(ev.couponDays || 14)}일</b> 동안 사용${ev.endAt ? ` (이벤트 ${fmtDate(ev.endAt)} 종료)` : ""}</div>
+        <div>✔ 계산할 때 휴대폰 쿠폰 화면만 보여주세요</div>
+        ${s.note ? `<div>✔ ${esc(s.note)}</div>` : ""}
+        ${limit ? `<div style="margin-top:4px"><b style="color:var(--red)">선착순 ${limit}명 · 남은 수량 ${left}개</b><div class="left-bar"><i style="width:${Math.max(4, Math.round(((limit - left) / limit) * 100))}%"></i></div></div>` : ""}
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="h2">이렇게 받아요</h3>
+      <div class="steps3"><div><b>📱</b>휴대폰 번호로<br>1초 가입</div><div><b>💬</b>알림톡으로<br>쿠폰 도착</div><div><b>🧾</b>계산할 때<br>화면 보여주기</div></div>
+    </div>
+
+    ${s.golden?.enabled && s.golden.benefit ? `<div class="section" style="padding-top:0"><div class="gift"><b>🎁 다시 오시면 선물이 하나 더!</b><div class="hint" style="font-size:15px;color:#555;margin-top:4px">쿠폰 쓰고 <b style="color:var(--red)">7일 안에</b> 다시 오시면 <b>${esc(s.golden.benefit)}</b></div></div></div>` : ""}
+
+    ${menus.length ? `<div class="section"><h3 class="h2">${s.category === "food" || s.category === "cafe" ? "이 집 대표 메뉴" : "대표 상품·서비스"}</h3>
+      <div class="menu-grid">${menus.map((m, i) => `<div class="menu-card"><div class="mthumb">${m.photo ? `<img src="${esc(m.photo)}" alt="${esc(m.name)}" loading="lazy">` : `<span>${CAT[s.category] || "🍽️"}</span>`}${i === 0 ? '<em class="best">대표</em>' : ""}</div><div class="mname">${esc(m.name)}</div><div class="mprice">${esc(m.price || "")}</div></div>`).join("")}</div></div>` : ""}
+
+    ${s.intro ? `<div class="section"><h3 class="h2">사장님 한마디</h3><div class="clamp open">${esc(s.intro)}</div></div>` : ""}
+
+    <div class="section"><h3 class="h2">찾아오시는 길</h3>
+      ${s.address ? `<div class="row-kv"><b>주소</b><span class="v">${esc(s.address)}<span id="mydist" class="mydist"></span></span><button class="copy-btn" data-copy="${esc(s.address)}" aria-label="복사">📋</button></div>` : ""}
+      ${s.phone ? `<div class="row-kv"><b>전화</b><a class="v" href="tel:${esc(s.phone)}" style="color:var(--blue)">${esc(s.phone)}</a><span></span></div>` : ""}
+      <div class="row-kv"><b>예약</b><span class="v">${esc(s.reservation || "예약 불필요")}</span><span></span></div>
+      <a class="btn line block" style="display:grid;place-items:center;margin-top:10px" target="_blank" rel="noopener" href="https://map.naver.com/p/search/${encodeURIComponent(s.address || s.name)}">네이버 지도로 길찾기</a>
+    </div>
+
+    <div class="section"><h3 class="h2">꼭 확인해 주세요</h3>
+      <ol class="ol">${(s.notices?.length ? s.notices : ["쿠폰은 1인 1회 사용할 수 있어요.", "다른 할인과 함께 쓸 수 없어요.", "쿠폰 받기 시 휴대폰 번호로 쿠폰 안내 알림톡이 발송돼요."]).map((n) => `<li>${esc(n)}</li>`).join("")}</ol>
+      <div class="hint" style="margin-top:10px">우리동네 쿠폰마을 · 소상공인 이벤트 쿠폰 서비스</div>
+    </div>`;
+
+  if (st.active && ev.endAt) {
+    const tick = () => { const el = $("#cd"); if (el) el.textContent = leftText(ev.endAt - Date.now()); };
+    tick(); clearInterval(window._cd); window._cd = setInterval(tick, 1000);
+  }
+  $$("[data-copy]").forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  if (s.lat) getLoc(false).then((l) => { const k = distKm(l, s); if (k != null) $("#mydist").innerHTML = ` · 내 위치에서 <b>${fmtKm(k)}</b>`; }).catch(() => {});
+
+  const cta = $("#cta");
+  const mineEv = mine?.eventCoupon;
+  cta.disabled = false; cta.classList.toggle("dark", false);
+  if (mineEv) { cta.textContent = mineEv.status === "active" ? "내 쿠폰 보기" : "이미 사용한 쿠폰이에요"; cta.classList.add("dark"); cta.onclick = () => (location.href = `/c/${mineEv.id}`); return; }
+  if (!st.active) { cta.textContent = st.upcoming ? "곧 오픈해요" : "이벤트가 끝났어요"; cta.disabled = true; return; }
+  if (limit && left === 0) { cta.textContent = "선착순 마감됐어요"; cta.disabled = true; return; }
+  cta.textContent = "1초 만에 쿠폰 받기";
+  cta.onclick = getCoupon;
+}
+
+async function getCoupon() {
+  if (!d.loggedIn) {
+    const c = await openLogin({ title: `${d.store.name} 쿠폰 받기`, desc: "휴대폰 번호만 인증하면 쿠폰이 알림톡으로 바로 와요." });
+    if (!c) return;
+  }
+  try {
+    const r = await api(`/api/stores/${encodeURIComponent(slug)}/coupon`, { body: { ch: channel() } });
+    await load();
+    const bg = document.createElement("div"); bg.className = "sheet-bg show";
+    const sh = document.createElement("div"); sh.className = "sheet";
+    sh.innerHTML = `<div style="text-align:center"><div style="font-size:52px">🎉</div><h3>${r.already ? "이미 받은 쿠폰이에요" : "쿠폰이 도착했어요!"}</h3>
+      <div class="hint" style="font-size:15px"><b>${esc(r.coupon.benefit)}</b><br>${fmtDate(r.coupon.expiresAt)}까지 · 알림톡으로도 보내드렸어요</div></div>
+      <a class="btn red block" style="display:grid;place-items:center;margin-top:18px" href="/c/${r.coupon.id}">쿠폰 보기</a>
+      <button class="btn line block" style="margin-top:8px" id="shx">닫기</button>`;
+    document.body.append(bg, sh);
+    requestAnimationFrame(() => sh.classList.add("show"));
+    const close = () => { sh.classList.toggle("show", false); bg.style.display = "none"; };
+    bg.onclick = close; $("#shx", sh).onclick = close;
+  } catch (e) { toast(e.message); }
+}
+
+load().catch((e) => ($("#root").innerHTML = `<div class="empty"><div class="e">🏚️</div>${esc(e.message)}</div>`));
+if (params.get("login")) toast("로그인됐어요. 쿠폰 받기를 눌러주세요!");
+</script>
+</body>
+</html>

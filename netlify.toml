@@ -13,6 +13,11 @@
   status = 200
 
 [[redirects]]
+  from = "/e/*"
+  to = "/event.html"
+  status = 200
+
+[[redirects]]
   from = "/c/*"
   to = "/coupon.html"
   status = 200

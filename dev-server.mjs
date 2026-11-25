@@ -10,7 +10,7 @@ const { processQueue } = await import("./netlify/lib/logic.mjs");
 
 const ROOT = path.resolve("site");
 const REWRITES = [
-  [/^\/s\/.+/, "/store.html"], [/^\/c\/.+/, "/coupon.html"], [/^\/owner\/poster$/, "/poster.html"],
+  [/^\/s\/.+/, "/store.html"], [/^\/e\/.+/, "/event.html"], [/^\/c\/.+/, "/coupon.html"], [/^\/owner\/poster$/, "/poster.html"],
   [/^\/owner$/, "/owner.html"], [/^\/me$/, "/me.html"], [/^\/join$/, "/join.html"],
 ];
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".ico": "image/x-icon" };

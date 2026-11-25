@@ -68,3 +68,24 @@ test("고객관리 전체 흐름", async () => {
   assert.equal(cur.newCustomers, 1);
   assert.equal(cur.top[0].name, "박단골");
 });
+
+test("광고 랜딩 → 유입 경로 기록 → 경로별 성과", async () => {
+  jar = {};
+  for (let i = 0; i < 3; i++) await call("POST", "/api/track", { slug: "bunsik", ch: "insta" });
+  await call("POST", "/api/track", { slug: "bunsik", ch: "daangn" });
+  const o = await call("POST", "/api/auth/otp", { phone: "01090901010" });
+  await call("POST", "/api/auth/verify", { phone: "01090901010", code: o.data.testCode, privacy: true, marketing: true, name: "인스타손님" });
+  const cp = await call("POST", "/api/stores/bunsik/coupon", { ch: "insta" });
+  assert.equal(cp.data.coupon.channel, "insta");
+  await call("POST", `/api/coupons/${cp.data.coupon.id}/redeem`, { pin: "0000" });
+  jar = {};
+  await call("POST", "/api/owner/login", { slug: "bunsik", password: "demo1234" });
+  const st = await call("GET", "/api/owner/channels");
+  const insta = st.data.stats.find((r) => r.key === "insta");
+  assert.deepEqual([insta.views, insta.signups, insta.visits], [3, 1, 1]);
+  assert.equal(st.data.stats.find((r) => r.key === "daangn").views, 1);
+  const crm = await call("GET", "/api/owner/crm");
+  assert.equal(crm.data.customers[0].source, "insta");
+  assert.equal((await call("POST", "/api/owner/channels", { key: "banner", name: "현수막" })).status, 200);
+  assert.equal((await call("POST", "/api/owner/channels", { key: "banner" })).status, 409);
+});

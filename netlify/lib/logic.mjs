@@ -168,7 +168,7 @@ async function activeCouponOf(cid, slug, kind) {
 }
 
 // 1) 이벤트 쿠폰 발급 (랜딩페이지 "원클릭 쿠폰 받기")
-export async function issueEventCoupon(store, customer) {
+export async function issueEventCoupon(store, customer, channel = null) {
   const st = eventStatus(store);
   if (!st.active) fail(400, "지금은 이벤트 기간이 아니에요.");
   const mine = (await customerCoupons(customer.id)).find(
@@ -189,8 +189,10 @@ export async function issueEventCoupon(store, customer) {
     title: store.event.title,
     benefit: store.event.benefit,
     expiresAt,
-    extra: { eventId: store.event.id },
+    extra: { eventId: store.event.id, channel: channel || null },
   });
+  // 처음 들어온 경로(광고)를 손님 정보에 기록
+  if (channel) await touchRelation(store.slug, customer.id, (r) => ({ source: r.source || channel }));
   // 발급 직후: 쿠폰 + 매장 위치 안내 (정보성)
   if (customer.phone) {
     const map = store.address ? `https://map.naver.com/p/search/${encodeURIComponent(store.address)}` : "";
@@ -464,7 +466,7 @@ export async function storeCustomers(slug) {
     const seg = segmentOf(r, now);
     out.push({
       ...r, name: c.name || "", phone: c.phone || "", marketing: !!c.marketing, grade: gradeOf(c.visits).name,
-      segment: seg, segmentName: SEGMENTS[seg].name, action: SEGMENTS[seg].action,
+      segment: seg, segmentName: SEGMENTS[seg].name, action: SEGMENTS[seg].action, source: r.source || null,
       daysSince: Math.floor((now - (r.lastVisitAt || r.firstAt)) / DAY),
     });
   }
@@ -584,7 +586,7 @@ export async function customerDetail(store, cid) {
     id: cid, name: c.name || "", phone: c.phone || "", marketing: !!c.marketing,
     birthday: rel.birthday || c.birthday || "", memo: rel.memo || "", tags: rel.tags || [],
     grade: gradeOf(c.visits), segment: seg, segmentName: SEGMENTS[seg].name, action: SEGMENTS[seg].action,
-    visitsHere: rel.visits || 0, firstAt: rel.firstAt, firstVisitAt: rel.firstVisitAt || null, lastVisitAt: rel.lastVisitAt || null,
+    visitsHere: rel.visits || 0, source: rel.source || null, firstAt: rel.firstAt, firstVisitAt: rel.firstVisitAt || null, lastVisitAt: rel.lastVisitAt || null,
     stamp: { count: (rel.visits || 0) % every, goal: every },
     visits, coupons,
     couponStats: { issued: coupons.length, used: coupons.filter((x) => x.status === "used").length },
@@ -689,3 +691,53 @@ export async function monthlyReport(slug, ym) {
   return { month: ym, cur, prev, segments: seg, totalCustomers: rels.length };
 }
 const maskPhoneLite = (p) => (p ? `${p.slice(0, 3)}-****-${p.slice(-4)}` : "");
+
+
+// ================= 광고 유입 경로 =================
+export const DEFAULT_CHANNELS = [
+  { key: "insta", name: "인스타그램", emoji: "📸" },
+  { key: "daangn", name: "당근", emoji: "🥕" },
+  { key: "naver", name: "네이버", emoji: "🟢" },
+  { key: "kakao", name: "카카오톡", emoji: "💬" },
+  { key: "qr", name: "매장 QR", emoji: "🔳" },
+  { key: "flyer", name: "전단지", emoji: "📄" },
+];
+export function normChannel(ch) {
+  const c = String(ch || "").trim().toLowerCase().slice(0, 20);
+  return /^[a-z0-9가-힣_-]{1,20}$/.test(c) ? c : null;
+}
+export function storeChannels(store) {
+  const custom = (store.channels || []).map((c) => ({ key: c.key, name: c.name, emoji: "🔗", custom: true }));
+  return [...DEFAULT_CHANNELS, ...custom];
+}
+export async function trackView(slug, ch) {
+  const c = normChannel(ch) || "direct";
+  const p = kstParts(Date.now());
+  const key = `tr/${slug}/${c}/${p.y}-${String(p.m + 1).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+  const s = await db();
+  const cur = (await s.get(key)) || { n: 0 };
+  cur.n += 1;
+  await s.set(key, cur);
+}
+export async function channelStats(store, days = 30) {
+  const s = await db();
+  const since = Date.now() - days * DAY;
+  const keys = await s.list(`tr/${store.slug}/`);
+  const views = {};
+  for (const k of keys) {
+    const [, , ch, date] = k.split("/");
+    if (Date.parse(date + "T00:00:00+09:00") < since - DAY) continue;
+    views[ch] = (views[ch] || 0) + ((await s.get(k))?.n || 0);
+  }
+  const coupons = (await storeCoupons(store.slug)).filter((c) => c.kind === "event" && c.issuedAt >= since);
+  const known = storeChannels(store);
+  const keysAll = new Set([...known.map((c) => c.key), ...Object.keys(views), ...coupons.map((c) => c.channel || "direct")]);
+  const rows = [...keysAll].map((key) => {
+    const meta = known.find((c) => c.key === key) || { key, name: key === "direct" ? "직접 방문·기타" : key, emoji: "🔗" };
+    const cs = coupons.filter((c) => (c.channel || "direct") === key);
+    const used = cs.filter((c) => c.status === "used").length;
+    const v = views[key] || 0;
+    return { ...meta, views: v, signups: cs.length, visits: used, signupRate: v ? Math.round((cs.length / v) * 100) : 0, visitRate: cs.length ? Math.round((used / cs.length) * 100) : 0 };
+  });
+  return rows.sort((a, b) => b.signups - a.signups || b.views - a.views);
+}
