@@ -68,6 +68,7 @@ function cardOf(store, here, issuedCount = 0) {
   const st = eventStatus(store);
   return {
     slug: store.slug, name: store.name, category: store.category, sub: store.sub, region: store.region, sido: store.sido, sigungu: store.sigungu,
+    externalUrl: store.externalUrl || null,
     photo: store.photos?.[0] || store.menu?.find((m) => m.photo)?.photo || null, headline: store.headline || store.event?.benefit || "", headlineSub: store.headlineSub || "",
     tags: store.tags || [], demo: !!store.demo, eventStatus: st, endAt: store.event?.endAt || null,
     golden: !!store.golden?.enabled, distance: distanceKm(here, store), popular: issuedCount,
@@ -405,12 +406,17 @@ on("GET", "/api/owner/me", async (req) => {
 });
 
 const EDITABLE = ["name", "category", "sub", "sido", "sigungu", "region", "address", "phone", "lat", "lng", "intro", "menu", "headline", "headlineSub", "note",
-  "tags", "reservation", "placeId", "placeUrl", "crossOffer", "churnOffer", "hidden", "keywords", "partners", "naverPlaceUrl", "reviewReward", "photos", "notices"];
+  "tags", "reservation", "placeId", "placeUrl", "externalUrl", "crossOffer", "churnOffer", "hidden", "keywords", "partners", "naverPlaceUrl", "reviewReward", "photos", "notices"];
 on("PUT", "/api/owner/store", async (req) => {
   const s = await needOwner(req);
   const b = await body(req);
   for (const k of EDITABLE) if (k in b) s[k] = b[k];
   if ("sido" in b || "sigungu" in b) s.region = [s.sido, s.sigungu].filter(Boolean).join(" ");
+  if ("externalUrl" in b) {
+    const u = String(b.externalUrl || "").trim();
+    if (u && !/^https:\/\/[^\s"'<>]+$/.test(u)) fail(400, "외부 링크는 https:// 로 시작하는 주소로 넣어주세요.");
+    s.externalUrl = u;
+  }
   if (b.staffPin) {
     if (!/^\d{4}$/.test(String(b.staffPin))) fail(400, "직원 확인 번호는 숫자 4자리예요.");
     s.staffPin = String(b.staffPin);

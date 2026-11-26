@@ -66,6 +66,7 @@ async function load() {
 
 function render() {
   const { store: s, mine } = d;
+  if (s.externalUrl) { location.replace(s.externalUrl); return; }
   const ev = s.event || {};
   const st = s.eventStatus;
   document.title = `${s.name} ${ev.title || "이벤트"} · 쿠폰 받기`;

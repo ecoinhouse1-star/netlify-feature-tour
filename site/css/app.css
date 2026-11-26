@@ -343,3 +343,5 @@ textarea.input { height: auto; min-height: 96px; padding: 12px 14px; line-height
 
 .link-row { display: flex; gap: 8px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .link-row .t { flex: 1; min-width: 0; font-size: 15px; }
+
+.badge-ext { position: absolute; left: 8px; bottom: 8px; background: var(--red); color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 6px; }

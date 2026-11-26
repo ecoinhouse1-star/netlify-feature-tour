@@ -82,11 +82,14 @@ export function cardHTML(s) {
   const urgent = d && (d === "오늘 마감" || Number(d.slice(2)) <= 3);
   const tags = (s.tags || []).map((t) => `<span class="tag ${t === "예약불필요" ? "blue" : t === "골든타임" ? "red" : ""}">${esc(t)}</span>`).join("");
   const dist = s.distance != null ? ` · ${s.distance < 1 ? Math.round(s.distance * 1000) + "m" : s.distance.toFixed(1) + "km"}` : "";
-  return `<a class="card" href="/s/${esc(s.slug)}">
+  const href = s.externalUrl ? esc(s.externalUrl) : `/s/${esc(s.slug)}`;
+  const ext = s.externalUrl ? ` target="_blank" rel="noopener" data-ext="${esc(s.slug)}"` : "";
+  return `<a class="card" href="${href}"${ext}>
     <div class="thumb">
       ${s.photo ? `<img src="${esc(s.photo)}" alt="" loading="lazy">` : ""}
       ${urgent ? `<span class="badge-dday">${d}</span>` : ""}
       ${s.demo ? `<span class="badge-demo">체험용</span>` : ""}
+      ${s.externalUrl ? `<span class="badge-ext">이벤트 사이트 ↗</span>` : ""}
       <button class="heart ${liked ? "on" : ""}" data-like="${esc(s.slug)}" aria-label="관심">${ICON.heart}</button>
     </div>
     <div class="meta">매장<span class="bar"></span><span class="region">${esc(s.region || "")}${dist}</span></div>
@@ -96,6 +99,13 @@ export function cardHTML(s) {
     ${tags ? `<div class="tags">${tags}</div>` : ""}
   </a>`;
 }
+
+// 외부 이벤트 사이트로 나가는 클릭 수 기록 (광고 링크 탭 '쿠폰마을 포털' 경로)
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-ext]");
+  if (!a || e.target.closest("[data-like]")) return;
+  try { fetch("/api/track", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ slug: a.dataset.ext, ch: "portal" }) }); } catch {}
+});
 
 export function bindLikes(root = document) {
   root.addEventListener("click", (e) => {

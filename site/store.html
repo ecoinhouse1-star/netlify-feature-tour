@@ -56,6 +56,7 @@ async function load() {
 
 function render() {
   const { store: s, mine, similar } = data;
+  if (s.externalUrl) { location.replace(s.externalUrl); return; }
   document.title = `${s.name} · 우리동네 쿠폰마을`;
   $("#dtitle").textContent = s.name;
   const menuPhotos = (s.menu || []).map((m) => m.photo).filter(Boolean);

@@ -1,6 +1,7 @@
+import crypto from "node:crypto";
 // 체험용 가상 가게 (영업 시연용). 환경변수 DEMO_SEED=off 이면 만들지 않음.
 import { hashPassword, endOfKstDay } from "./util.mjs";
-import { listStores, saveStore } from "./logic.mjs";
+import { listStores, saveStore, getStore } from "./logic.mjs";
 
 const DAY = 86400000;
 
@@ -226,9 +227,35 @@ function applyPhotos(store) {
   return store;
 }
 
+// 쿠폰마을 통합 사이트에 걸어두는 가게 (카드를 누르면 가게 자체 이벤트 사이트로 이동)
+const LISTINGS = [
+  {
+    slug: "yubanjang", name: "유반장", category: "food", sub: "한식·분식", sido: "경기", sigungu: "여주시", region: "경기 여주시",
+    address: "경기 여주시", lat: 37.2982, lng: 127.6375, phone: "",
+    photos: ["/img/demo/yubanjang.svg"], headline: "여주 이벤트 진행 중", headlineSub: "유반장 이벤트 페이지에서 확인",
+    note: "", tags: ["여주", "이벤트"], externalUrl: "https://yubanjang-yeoju-event.narianlee.chatgpt.site/",
+    intro: "", menu: [],
+  },
+];
+async function ensureListings() {
+  const now = Date.now();
+  for (const d of LISTINGS) {
+    if (await getStore(d.slug)) continue;
+    await saveStore({
+      ...d, demo: false, listing: true,
+      ownerPwHash: hashPassword(crypto.randomBytes(18).toString("hex")), staffPin: String(Math.floor(1000 + Math.random() * 9000)),
+      reservation: "예약 불필요", reviewReward: "", naverPlaceUrl: "",
+      event: { id: "e1", title: "유반장 이벤트", benefit: "유반장 이벤트 페이지에서 확인", startAt: now - 86400000, endAt: now + 365 * 86400000, couponDays: 14 },
+      golden: { enabled: false, type: "companion", benefit: "" }, crossOffer: "", churnOffer: "", hidden: {}, keywords: [], partners: [],
+      createdAt: now,
+    });
+  }
+}
+
 export async function seedIfEmpty() {
+  const existing = (await listStores()).filter((x) => !x.listing);
+  await ensureListings();
   if (process.env.DEMO_SEED === "off") return false;
-  const existing = await listStores();
   if (existing.length) {
     for (const st of existing) {
       if (!st.demo || st.seedVersion === SEED_VERSION) continue;

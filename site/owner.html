@@ -246,6 +246,7 @@ function info() {
     <div class="field"><label>전화</label><input class="input" id="phone" value="${esc(s.phone)}"></div>
     <div class="field"><label>도로명 주소</label><input class="input" id="addr" value="${esc(s.address)}"></div>
     <div class="field"><label>지도 위치</label><div class="hint" id="pos">${s.lat ? `설정됨 (${s.lat.toFixed(4)}, ${s.lng.toFixed(4)})` : "미설정 — 가게 안에서 아래 버튼을 눌러주세요"}</div><button class="btn line sm" id="gps" style="margin-top:6px">📍 지금 위치를 가게 위치로</button></div>
+    <div class="field"><label>외부 이벤트 사이트 (선택)</label><input class="input" id="ext" value="${esc(s.externalUrl || "")}" placeholder="https://… 넣으면 쿠폰마을 카드를 눌렀을 때 이 사이트로 이동"><div class="hint">비워두면 쿠폰마을 가게 화면으로 연결돼요.</div></div>
     <div class="field"><label>예약</label><select class="input" id="res"><option ${s.reservation === "예약 불필요" ? "selected" : ""}>예약 불필요</option><option ${s.reservation === "예약 필수" ? "selected" : ""}>예약 필수</option><option ${s.reservation === "예약 권장" ? "selected" : ""}>예약 권장</option></select></div>
     <div class="field"><label>태그 (쉼표로 구분)</label><input class="input" id="tags" value="${esc((s.tags || []).join(", "))}" placeholder="예약불필요, 골든타임, 주차가능"></div>
     <div class="field"><label>매장 소개</label><textarea class="input" id="intro" rows="5">${esc(s.intro)}</textarea></div>
@@ -317,6 +318,7 @@ function info() {
     ...placeExtra, photos, name: v("name"), sido: "경기", sigungu: v("sgg"), category: v("cat"), sub: v("sub"), phone: v("phone"), address: v("addr"),
     lat: pos?.lat ?? null, lng: pos?.lng ?? null, reservation: v("res"), tags: v("tags").split(",").map((x) => x.trim()).filter(Boolean),
     intro: $("#intro").value, menu: $$("#menu .menu-edit").map((r) => ({ name: r.children[1].value.trim(), price: r.children[2].value.trim(), photo: r.dataset.photo || "" })).filter((m) => m.name),
+    externalUrl: v("ext"),
     notices: $("#notices").value.split("\n").map((x) => x.trim()).filter(Boolean), staffPin: v("pin"), newPassword: $("#npw").value || undefined,
   });
 }

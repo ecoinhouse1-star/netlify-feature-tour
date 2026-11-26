@@ -21,7 +21,7 @@ async function call(method, p, body) {
 
 test("손님 흐름 전체", async () => {
   const list = await call("GET", "/api/stores");
-  assert.equal(list.data.stores.length, 10);
+  assert.equal(list.data.stores.length, 11);
   // 로그인 없이 쿠폰 받기 → 401
   assert.equal((await call("POST", "/api/stores/hanuri/coupon")).status, 401);
   const otp = await call("POST", "/api/auth/otp", { phone: "010-1234-5678" });
